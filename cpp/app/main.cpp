@@ -1,53 +1,56 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#include "arguments.h"
-#include "input_source.h"
-#include "output_window.h"
-#include "results_writer.h"
 #include "pipeline/pipeline.h"
-#include "temporal/line_stabilizer.h"
-#include <chrono>
-#include <optional>
 
-#include <algorithm>
-#include <iostream>
-#include <iomanip>
+#include <opencv2/videoio.hpp>
 #include <csignal>
+#include <filesystem>
+#include <iomanip>
+#include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
-#include <vector>
+#include <string_view>
 
 namespace {
+constexpr const char* usage =
+    "Usage: lines_metis --video <path> --config <config.yaml> [--profile]\n"
+    "Processes the video to EOF. Press Ctrl+C to stop.\n";
 volatile std::sig_atomic_t stop_requested = 0;
+
+struct Arguments {
+    std::filesystem::path video_path;
+    std::filesystem::path config_path;
+    bool profile = false;
+};
+
+std::optional<Arguments> ParseArguments(int argc, char** argv) {
+    if (argc == 2 && (std::string_view(argv[1]) == "--help" || std::string_view(argv[1]) == "-h")) {
+        std::cout << usage;
+        return std::nullopt;
+    }
+    Arguments args;
+    for (int index = 1; index < argc; ++index) {
+        const std::string option = argv[index];
+        if (option == "--profile") {
+            if (args.profile) throw std::invalid_argument("Specify --profile only once");
+            args.profile = true;
+        } else if (option == "--video" || option == "--config") {
+            if (++index >= argc || argv[index][0] == '\0' || argv[index][0] == '-') {
+                throw std::invalid_argument("Missing value for " + option);
+            }
+            auto& path = option == "--video" ? args.video_path : args.config_path;
+            if (!path.empty()) throw std::invalid_argument("Specify " + option + " only once");
+            path = argv[index];
+        } else {
+            throw std::invalid_argument("Unexpected argument: " + option);
+        }
+    }
+    if (args.video_path.empty() || args.config_path.empty()) throw std::invalid_argument(usage);
+    return args;
+}
 
 void RequestStop(int) {
     stop_requested = 1;
-}
-
-void PrintConfig(const lines::PipelineConfig& config) {
-    const auto& settings = config.segment_extractor;
-    const auto& thresholds = settings.thresholds;
-    std::cout << "Model directory: " << config.inference.model_directory.string() << '\n'
-              << "Segment thresholds (network pixels; angles in radians):\n"
-              << "  max_distance: " << thresholds.max_distance << '\n'
-              << "  angle_tolerance: " << thresholds.angle_tolerance << '\n'
-              << "  region_radius: " << thresholds.region_radius << '\n'
-              << "  min_length: " << thresholds.min_length << '\n'
-              << "  min_support: " << thresholds.min_support << '\n'
-              << "  min_pixels: " << thresholds.min_pixels << '\n'
-              << "  duplicate_distance: " << thresholds.duplicate_distance << '\n'
-              << "  merge_gap: " << thresholds.merge_gap << '\n'
-              << "  merge_distance: " << thresholds.merge_distance << '\n'
-              << "  max_mean_distance: " << thresholds.max_mean_distance << '\n'
-              << "Joining enabled: " << (settings.joining_enabled ? "true" : "false") << '\n';
-}
-
-void PrintSegments(const std::vector<lines::Segment>& segments) {
-    std::cout << "Extracted segments: " << segments.size() << " (original-image coordinates)\n";
-    for (std::size_t index = 0; index < std::min(segments.size(), std::size_t(5)); ++index) {
-        const auto& segment = segments[index];
-        std::cout << "  (" << segment.x1 << ", " << segment.y1 << ") -> ("
-                  << segment.x2 << ", " << segment.y2 << ")\n";
-    }
 }
 
 void PrintProfile(const lines::PipelineTimings& total, std::size_t frames) {
@@ -58,37 +61,27 @@ void PrintProfile(const lines::PipelineTimings& total, std::size_t frames) {
               << "  Postprocessing: " << total.postprocess_ms / frames << " ms\n"
               << "  Extraction:     " << total.extraction_ms / frames << " ms\n"
               << "  Pipeline total: " << total.total_ms / frames << " ms (includes coordinate mapping)\n"
-              << "  Excludes model loading, capture, display and console output\n";
+              << "  Processing FPS: " << 1000.0 * frames / total.total_ms << '\n'
+              << "  Excludes model loading, video decoding and console output\n";
 }
 
-void RunInput(const lines::app::Arguments& args, const lines::PipelineConfig& config) {
-    lines::app::InputSource input(args);
-    cv::Mat frame;
-    if (!input.Read(frame)) throw std::runtime_error("Input contains no readable frames");
-
-    std::optional<lines::LineStabilizer> stabilizer;
-    if (!args.temporal_config_path.empty()) {
-        stabilizer.emplace(lines::LoadTemporalConfig(args.temporal_config_path));
-        std::cout << "Temporal stabilization enabled (separate stage after Pipeline)\n";
+void RunVideo(const Arguments& args, const lines::PipelineConfig& config) {
+    if (!std::filesystem::is_regular_file(args.video_path)) {
+        throw std::runtime_error("Video file does not exist: " + args.video_path.string());
     }
-    lines::app::ResultsWriter results(args, config);
+    cv::VideoCapture capture(args.video_path.string());
+    cv::Mat frame;
+    if (!capture.isOpened() || !capture.read(frame) || frame.empty()) {
+        throw std::runtime_error("Cannot read video: " + args.video_path.string());
+    }
+
     lines::Pipeline pipeline(config);
-    double temporal_total_ms = 0;
-    lines::app::OutputWindow window(args.show);
-    std::size_t frame_number = 0;
     lines::PipelineTimings total;
+    std::size_t frames = 0;
     do {
         if (stop_requested) break;
         lines::PipelineTimings timings;
-        const auto raw_segments = pipeline.Process(frame, (args.profile || !args.output_path.empty()) ? &timings : nullptr);
-        auto segments = raw_segments;
-        double temporal_ms = 0;
-        if (stabilizer) {
-            const auto start = std::chrono::steady_clock::now();
-            segments = stabilizer->Process(frame, raw_segments, input.timestamp_seconds());
-            temporal_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-start).count();
-            temporal_total_ms += temporal_ms;
-        }
+        pipeline.Process(frame, args.profile ? &timings : nullptr);
         if (args.profile) {
             total.preprocess_ms += timings.preprocess_ms;
             total.inference_ms += timings.inference_ms;
@@ -96,40 +89,21 @@ void RunInput(const lines::app::Arguments& args, const lines::PipelineConfig& co
             total.extraction_ms += timings.extraction_ms;
             total.total_ms += timings.total_ms;
         }
-        results.Write(input, frame, segments, timings, stabilizer ? &raw_segments : nullptr, temporal_ms);
-        ++frame_number;
-        if (!args.show && args.output_path.empty()) {
-            std::cout << "Frame " << frame_number << ": " << frame.cols << " x " << frame.rows << '\n';
-            PrintSegments(segments);
-        }
-        if (!args.output_path.empty() && frame_number % 100 == 0) {
-            std::cout << "Exported " << frame_number << " frames" << std::endl;
-        }
-        if (!window.Show(frame, segments)) break;
-    } while (!stop_requested && (args.max_frames == 0 || frame_number < args.max_frames) && input.Read(frame));
-    results.Finish();
-    std::cout << "Processed " << frame_number << " frame(s)\n";
-    if (args.profile && frame_number > 0) {
-        PrintProfile(total, frame_number);
-        if (stabilizer) std::cout << "  Temporal:       " << temporal_total_ms / frame_number
-                                  << " ms (additional to Pipeline total)\n";
-    }
-}
+        ++frames;
+    } while (!stop_requested && capture.read(frame) && !frame.empty());
 
+    std::cout << "Processed " << frames << " frame(s)\n";
+    if (args.profile && frames > 0) PrintProfile(total, frames);
+}
 }
 
 int main(int argc, char** argv) {
     try {
-        const auto args = lines::app::ParseArguments(argc, argv);
-        if (!args) {
-            return 0;
-        }
-
-        const lines::PipelineConfig config = lines::LoadConfig(args->config_path);
-        PrintConfig(config);
-
+        const auto args = ParseArguments(argc, argv);
+        if (!args) return 0;
+        const auto config = lines::LoadConfig(args->config_path);
         std::signal(SIGINT, RequestStop);
-        RunInput(*args, config);
+        RunVideo(*args, config);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

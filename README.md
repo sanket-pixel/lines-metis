@@ -2,11 +2,12 @@
 
 DeepLSD line segment detection on Metis. The C++ port currently implements configuration loading, image preprocessing and
 the AIPU backend, postprocessing, segment extraction and Pipeline orchestration. The legacy extractor and Python binding
-have been removed. The app provides live overlays; a Python renderer creates polished videos from cached detections. Python model, preprocessing and AxRuntime logic remain as references.
+have been removed. The app processes video and reports stage timings; a Python renderer creates polished videos from cached detections. Python model, preprocessing and AxRuntime logic remain as references.
 
 ```text
 python/                 model, inference reference, export and compilation
-cpp/app/                CLI arguments, input sources, result export and preview
+cpp/app/main.cpp        video runner and optional stage profiling
+cpp/tools/              standalone temporal replay tool
 cpp/include/            C++ module headers
 cpp/src/                module implementations
 weights/torch/          official MegaDepth weights and provenance
@@ -39,38 +40,24 @@ cmake -S . -B build
 cmake --build build -j4
 ```
 
-Set `-DAXRUNTIME_ROOT=/path/to/runtime` when needed. The `lines_metis` app currently loads and validates YAML settings, prints the resolved
-`PipelineConfig`, and runs image, video or webcam input through the full pipeline:
+Set `-DAXRUNTIME_ROOT=/path/to/runtime` when needed. The app loads YAML settings,
+constructs one Pipeline, and processes a video to EOF:
 
 ```bash
-./build/cpp/lines_metis --image data/tum/freiburg2_pioneer_slam/<frame>.png --config configs/default.yaml
-./build/cpp/lines_metis --video /path/to/video.mp4 --config configs/default.yaml
-./build/cpp/lines_metis --webcam 0 --config configs/default.yaml --show
+./build/cpp/lines_metis --video /path/to/freiburg2.mp4 --config configs/default.yaml --profile
 ```
 
-Choose exactly one source: `--image <path>`, `--sequence <directory>`,
-`--video <path>` or `--webcam <index>`. Sequences read PNG/JPEG files in sorted filename order.
-The previous positional image-path syntax also works. Images are processed once;
-video ends at EOF, and webcam input continues until stopped. `--max-frames N`
-optionally limits processing; Ctrl+C stops the loop and releases its resources.
-Add `--show` for a window with green segment overlays and the current detection
-count and measured frame rate. Press Esc/Q or close the window to stop the preview.
-Add `--profile` to print average preprocessing, inference, postprocessing and
-segment-extraction times in milliseconds per frame when processing ends. The
-pipeline total also includes coordinate mapping. These figures include the first
-frame and exclude model loading, capture, rendering and console output. For a
-live preview, stop with Esc/Q or Ctrl+C to see the summary.
+The app accepts only `--video <path>`, `--config <config.yaml>` and optional
+`--profile` (`--help` prints usage). Press Ctrl+C to stop early. Profiling reports
+mean preprocessing, inference, postprocessing, extraction and total Pipeline time,
+plus processing FPS. Measurements include the first frame and coordinate mapping;
+they exclude model loading, video decoding and console output. Without `--profile`,
+the app prints only the processed frame count. Use a Release build for timing.
 
-Use a Release build (or the Release profile in CLion) for live input. Linux webcam
-capture uses V4L2 and requests a small capture buffer to reduce lag.
-Each frame prints its segment count and a few endpoint pairs. Input handling does
-not add temporal state to the Pipeline.
-
-In CLion, select the `lines_metis` target and put one source option plus `--config`
-and its YAML path in Program arguments. Paths inside YAML files resolve
-relative to their containing file. `segment_extractor.strictness` selects a preset
-from `presets_file`; optional `min_length` and `max_join_gap` override its values.
-Incomplete thresholds, invalid values and unknown keys are errors.
+In CLion, select the `lines_metis` target and paste the same arguments into Program
+arguments. Paths inside YAML resolve relative to the YAML file. The selected
+`segment_extractor.strictness` preset comes from `presets_file`; optional
+`min_length` and `max_join_gap` override it. Unknown keys and invalid values are errors.
 
 Preset comparison (distances and lengths in network pixels):
 
@@ -90,38 +77,16 @@ The previous strict default is preserved as `configs/strict.yaml`.
 Full threshold definitions, including region/angle and lateral-join tolerances,
 are in `configs/segment_presets.yaml`.
 
-Export reusable detections for Python visualization without another inference run:
+Previously saved detection exports remain available for Python visualization.
+JSONL contains metadata, one record per source frame, then a final frame-count
+summary. Each frame includes `segments` as `[x1,y1,x2,y2]` in original-image
+pixels and `timings_ms`. The renderer draws these endpoints directly, without
+mapping them a second time. The compact video app does not export detections.
 
-```bash
-./build/cpp/lines_metis --sequence data/tum/freiburg2_pioneer_slam \
-  --config configs/default.yaml \
-  --output results/freiburg2_pioneer_slam_aipu_calib200_balanced_detections.jsonl --profile
-```
-
-`--output` refuses to overwrite an existing file. JSONL contains one metadata
-record, one record per processed frame, then a summary with the exported count.
-Metadata captures the input location, selected preset, resolved thresholds and
-model provenance. Frame records contain zero-based `index`, `file`,
-`timestamp_seconds`, `width`, `height`, `segments` and `timings_ms`.
-Each segment is `[x1,y1,x2,y2]` in original-image pixels, already mapped once.
-Freiburg timestamps come from the numeric filenames, in seconds; nonnumeric image
-names yield null timestamps. Video timestamps use capture position, while webcam
-timestamps measure elapsed time since opening the source. Timing values exclude
-image loading, rendering and result serialization. A missing final summary means
-the export did not finish successfully.
-
-A Python renderer can load each frame record with `json.loads(line)`, open the
-original image under the metadata input directory, and draw `segments` directly.
-The saved source timestamps let it choose playback timing independently of
-Pipeline processing speed.
-
-The app constructs one `Pipeline(config)` per input and calls `Process(frame)`
-for each frame. Pipeline owns the
-AIPU context and all four modules, reuses its decoded-field buffers, and calls
-preprocessing, inference, postprocessing and segment extraction in order. It then
-maps endpoints once to original-image coordinates and returns `std::vector<Segment>`.
-The app prints the segment count and first five endpoint pairs; the modules do not
-print intermediate diagnostics.
+The Pipeline owns its AIPU context and four modules, reuses decoded-field buffers,
+and runs preprocessing, inference, postprocessing and segment extraction in order.
+It maps endpoints once to original-image coordinates and returns `std::vector<Segment>`.
+The video runner adds no temporal state or per-frame console diagnostics.
 
 Preprocessing converts BGR to grayscale, resizes to 320x240 with INTER_AREA,
 normalizes with `/255`, then quantizes and pads the backend input using runtime
@@ -233,13 +198,11 @@ detections and showcase artifacts. Git contains source, configs, licenses and
 provenance; datasets, model binaries, generated results, build products and IDE
 state stay local. Result links above refer to locally generated files.
 
-### Optional temporal consistency experiment
+### Temporal consistency experiment
 
-On `experiment/temporal-consistency`, add
-`--temporal-config configs/temporal.yaml` to enable motion-compensated endpoint
-smoothing, confirmation and brief supported gap recovery after the Pipeline.
-The default frame-by-frame path and frozen showcase remain unchanged. See the
-[method, replay commands and evaluation](experiments/temporal_consistency.md).
+The temporal module and standalone `stabilize_results` tool remain available for
+cached sequence experiments. They are separate from the video profiling app.
+See the [method, replay commands and evaluation](experiments/temporal_consistency.md).
 
 ### Extractor performance branch
 

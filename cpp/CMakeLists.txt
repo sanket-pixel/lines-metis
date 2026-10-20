@@ -5,7 +5,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs videoio highgui video)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs videoio video)
 find_package(yaml-cpp REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
@@ -71,19 +71,12 @@ target_link_libraries(lines_cpp PUBLIC axruntime::axruntime opencv_core opencv_i
     PRIVATE yaml-cpp::yaml-cpp nlohmann_json::nlohmann_json OpenSSL::Crypto)
 target_compile_options(lines_cpp PRIVATE -Wall -Wextra -Wpedantic)
 
-add_executable(lines_metis
-    app/main.cpp
-    app/arguments.cpp
-    app/input_source.cpp
-    app/output_window.cpp
-    app/results_writer.cpp
-)
-target_link_libraries(lines_metis PRIVATE lines_cpp lines_temporal opencv_imgcodecs opencv_videoio opencv_highgui
-    nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp)
+add_executable(lines_metis app/main.cpp)
+target_link_libraries(lines_metis PRIVATE lines_cpp opencv_videoio)
 set_target_properties(lines_metis PROPERTIES CXX_EXTENSIONS OFF)
 target_compile_options(lines_metis PRIVATE -Wall -Wextra -Wpedantic)
 
-add_executable(stabilize_results app/stabilize_results.cpp)
+add_executable(stabilize_results tools/stabilize_results.cpp)
 target_link_libraries(stabilize_results PRIVATE lines_temporal opencv_imgcodecs nlohmann_json::nlohmann_json)
 target_compile_options(stabilize_results PRIVATE -Wall -Wextra -Wpedantic)
 

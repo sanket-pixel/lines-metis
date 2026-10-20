@@ -39,16 +39,13 @@ Build with the OpenCV `video` module in addition to the existing dependencies:
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j4
 ctest --test-dir build --output-on-failure
-
-./build/cpp/lines_metis --webcam 0 --config configs/default.yaml \
-  --temporal-config configs/temporal.yaml --show --profile
 ```
 
-Omit `--temporal-config` for the unchanged frame-by-frame behavior. Temporal
-settings are in a separate YAML file; the existing Pipeline config stays intact.
-`--profile` reports temporal time separately from the original Pipeline total.
-With `--output`, schema 2 retains `raw_segments`, the stabilized `segments`, the
-resolved temporal settings and separate `temporal_ms` measurements.
+The current compact video app has no temporal or export switches. The earlier
+app integration is preserved in commit `4329403`; the module and replay tool
+remain available for cached experiments. Temporal settings are in their own YAML
+file. Replay schema 2 retains `raw_segments`, stabilized `segments`, resolved
+settings and separate `temporal_ms` measurements.
 
 Replay the saved sequence without loading the model:
 
