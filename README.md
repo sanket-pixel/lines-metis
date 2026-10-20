@@ -33,15 +33,24 @@ Parameters: `BACKEND=torch`, `SEQ=freiburg2_pioneer_slam`, `FRAMES=100`,
 if needed. Calibration uses distinct real images and the inference preprocessing.
 Compilation works in a temporary directory before updating `weights/aipu/`.
 
-Build with OpenCV, yaml-cpp, nlohmann_json, OpenSSL and AxRuntime installed:
+With OpenCV, yaml-cpp, nlohmann_json, OpenSSL and AxRuntime installed, run from
+the repository root:
 
 ```bash
-cmake -S . -B build
-cmake --build build -j4
+make build
+make video VIDEO=/path/to/freiburg2.mp4
+make profile VIDEO=/path/to/freiburg2.mp4
 ```
 
-Set `-DAXRUNTIME_ROOT=/path/to/runtime` when needed. The app loads YAML settings,
-constructs one Pipeline, and processes a video to EOF:
+`make` also builds by default. Video and profile commands build automatically,
+use Release settings and select balanced via `configs/default.yaml`. Override
+`CONFIG=configs/strict.yaml` or `CONFIG=configs/relaxed.yaml` when needed.
+Paths containing spaces work when quoted, for example `VIDEO="/path/my video.mp4"`.
+Build settings can be overridden with `BUILD_DIR=build`, `JOBS=4` and
+`AXRUNTIME_ROOT=/path/to/runtime`; CMake detects the installed runtime by default.
+Existing `make infer`, `make export` and `make compile` commands remain available.
+
+The equivalent direct invocation is:
 
 ```bash
 ./build/cpp/lines_metis --video /path/to/freiburg2.mp4 --config configs/default.yaml --profile
