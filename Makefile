@@ -13,7 +13,7 @@ CALIB_IMAGES ?= 10
 BUILD_DIR ?= build
 JOBS ?= 4
 CONFIG ?= configs/default.yaml
-VIDEO ?=
+VIDEO ?= data/sample.mp4
 AXRUNTIME_ROOT ?= /opt/axelera
 
 .PHONY: build video profile infer export compile

@@ -38,8 +38,18 @@ the repository root:
 
 ```bash
 make build
-make video VIDEO=/path/to/freiburg2.mp4
-make profile VIDEO=/path/to/freiburg2.mp4
+make video
+make profile
+```
+
+The default video is `data/sample.mp4`: the first 600 Freiburg 2 frames played at
+30 FPS (20 seconds), encoded losslessly. It stays local with the dataset.
+Override it with `VIDEO=/path/to/video.mp4`. Recreate the sample from local frames
+with FFmpeg if needed:
+
+```bash
+ffmpeg -n -framerate 30 -pattern_type glob -i 'data/tum/freiburg2_pioneer_slam/*.png' \
+  -frames:v 600 -c:v libx264rgb -crf 0 -preset fast -movflags +faststart data/sample.mp4
 ```
 
 `make` also builds by default. Video and profile commands build automatically,
