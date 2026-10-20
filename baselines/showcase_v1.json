@@ -1,0 +1,66 @@
+{
+  "name": "Balanced showcase v1",
+  "preset": "balanced",
+  "sequence": "freiburg2_pioneer_slam",
+  "calibration_frames": 200,
+  "detection_frames": 2921,
+  "note": "Hashes identify the frozen local baseline. Datasets, weights and rendered results are not distributed in Git.",
+  "files": {
+    "configs/default.yaml": {
+      "sha256": "54808ac1ab0eb920b2f9455ece30a8cdeeb5230e6816a311da431f183aea7fca",
+      "bytes": 150
+    },
+    "configs/segment_presets.yaml": {
+      "sha256": "0bcb3b4432f2a04717a654b1d03dd9f095097db8a74835d75b254658430ed3c5",
+      "bytes": 839
+    },
+    "python/visualize_results.py": {
+      "sha256": "c6c781f3f07a585d34b0dfad100704f9b857056f54ee1890c5dc8f01c7fafc03",
+      "bytes": 8677
+    },
+    "weights/torch/deeplsd.pt": {
+      "sha256": "da37825032c3c72a5e8a149da9f37302e65ceab58e176b24fc7af53e8a0f8a7f",
+      "bytes": 34324385
+    },
+    "weights/onnx/deeplsd.onnx": {
+      "sha256": "ea1cb986afb83da0a43d8f0785797825ce8da6fec2f40400294a8021764e0c87",
+      "bytes": 34304001
+    },
+    "weights/aipu/model.json": {
+      "sha256": "80f5deb36939a34c7e903ae11e600d6a0969dd38df2177e4d69f32f1980999f4",
+      "bytes": 2218
+    },
+    "weights/aipu/manifest.json": {
+      "sha256": "d9b72914b5df05f68d40add94be73cbc65f788f051d55fb3928467aefaff4b4d",
+      "bytes": 1320
+    },
+    "weights/aipu/kernel_function.elf": {
+      "sha256": "7c70f5dcd9147cb7af7e90859140eca36e4514f7e62b4b78d8a29ccefe6af01e",
+      "bytes": 193040
+    },
+    "weights/aipu/pool_ddr_const.bin": {
+      "sha256": "b7a9e46c080f5561a0865f40d2eb292550920a8c1945ab53c5c7cbe2b7671ad3",
+      "bytes": 16120832
+    },
+    "weights/aipu/pool_l2_const.bin": {
+      "sha256": "58a7b1580126d8b7a4a38a425b0acd33cdf5a744f695f3dc4a03c743ff0deede",
+      "bytes": 79360
+    },
+    "weights/aipu/provenance.json": {
+      "sha256": "4f5b3fe73a829430d5aba7d7042625ea586fbec1285c6ff67c72704f7e987320",
+      "bytes": 27808
+    },
+    "results/freiburg2_pioneer_slam_aipu_calib200_balanced_detections.jsonl": {
+      "sha256": "1e0a3a9dd482f91c8d1d80cab3a76b97ff47ca376b6af3b96582ae121f869658",
+      "bytes": 20489784
+    },
+    "results/lines_metis_balanced_showcase_full.mp4": {
+      "sha256": "f39d9c3f7b17b5ab5cd3d26b63c4a922bdc074886fbd45ce143ce9d363c9a65a",
+      "bytes": 140420138
+    },
+    "results/lines_metis_balanced_showcase.png": {
+      "sha256": "d7a0963d55ee962171707b07b162832bb1e561e9a5db3ed654b51997ba02c9e8",
+      "bytes": 955737
+    }
+  }
+}

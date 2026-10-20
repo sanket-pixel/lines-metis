@@ -1,0 +1,10 @@
+inference:
+  # Relative paths are resolved from this YAML file's directory.
+  model_directory: ../weights/aipu
+
+segment_extractor:
+  presets_file: segment_presets.yaml
+  strictness: strict
+  min_length: 10.0       # Network pixels.
+  joining_enabled: true
+  max_join_gap: 4.0      # Network pixels.

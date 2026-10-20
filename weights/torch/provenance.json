@@ -1,0 +1,8 @@
+{
+  "source_url": "https://cvg-data.inf.ethz.ch/DeepLSD/deeplsd_md.tar",
+  "source_sha256": "56e9bae263977caa289ae49802987a67d4f00f376ae7e542176c8ae0a6cc2083",
+  "weights_sha256": "da37825032c3c72a5e8a149da9f37302e65ceab58e176b24fc7af53e8a0f8a7f",
+  "license": "MIT",
+  "tensor_only_conversion_verified": true,
+  "upstream_commit": "f7d9d6258c0cd25d4f6eea882853565403d289be"
+}

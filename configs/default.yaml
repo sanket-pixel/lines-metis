@@ -1,0 +1,7 @@
+inference:
+  model_directory: ../weights/aipu
+
+segment_extractor:
+  presets_file: segment_presets.yaml
+  strictness: balanced
+  joining_enabled: true

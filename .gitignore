@@ -1,0 +1,34 @@
+# Local environments, caches and IDE state
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pkl_memoize_py3/
+.idea/
+.vscode/
+.env
+.env.*
+
+# Build products
+/build/
+/build-*/
+/cmake-build-*/
+*.so
+*.o
+*.a
+
+# Datasets and generated results stay local
+/data/
+/results/
+
+# Model artifacts stay local; keep provenance and export metadata
+/weights/*
+!/weights/torch/
+!/weights/onnx/
+!/weights/aipu/
+/weights/torch/*
+!/weights/torch/provenance.json
+/weights/onnx/*
+!/weights/onnx/metadata.json
+/weights/aipu/*
+!/weights/aipu/provenance.json

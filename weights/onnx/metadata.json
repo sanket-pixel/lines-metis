@@ -1,0 +1,24 @@
+{
+  "sha256": "ea1cb986afb83da0a43d8f0785797825ce8da6fec2f40400294a8021764e0c87",
+  "torch_weights_sha256": "da37825032c3c72a5e8a149da9f37302e65ceab58e176b24fc7af53e8a0f8a7f",
+  "input": [
+    1,
+    1,
+    240,
+    320
+  ],
+  "outputs": [
+    "distance_normalized",
+    "orientation_fraction"
+  ],
+  "opset": 17,
+  "operators": {
+    "Conv": 22,
+    "Relu": 21,
+    "BatchNormalization": 20,
+    "AveragePool": 3,
+    "Resize": 3,
+    "Concat": 3,
+    "Sigmoid": 1
+  }
+}
