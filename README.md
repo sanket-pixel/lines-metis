@@ -232,3 +232,11 @@ and `--preview` without `--output` for a still. Existing files are never overwri
 detections and showcase artifacts. Git contains source, configs, licenses and
 provenance; datasets, model binaries, generated results, build products and IDE
 state stay local. Result links above refer to locally generated files.
+
+### Optional temporal consistency experiment
+
+On `experiment/temporal-consistency`, add
+`--temporal-config configs/temporal.yaml` to enable motion-compensated endpoint
+smoothing, confirmation and brief supported gap recovery after the Pipeline.
+The default frame-by-frame path and frozen showcase remain unchanged. See the
+[method, replay commands and evaluation](experiments/temporal_consistency.md).

@@ -10,7 +10,7 @@ namespace lines::app {
 namespace {
 constexpr const char* usage =
     "Usage: lines_metis (--image <path> | --sequence <directory> | --video <path> | --webcam <index>)\n"
-    "                   --config <config.yaml> [--max-frames <count>] [--show] [--profile] [--output <results.jsonl>]\n"
+    "                   --config <config.yaml> [--max-frames <count>] [--show] [--profile] [--output <results.jsonl>] [--temporal-config <temporal.yaml>]\n"
     "       lines_metis <image> --config <config.yaml>\n"
     "Video ends at EOF. Use Ctrl+C, or Esc/Q in the preview window, to stop.\n";
 
@@ -54,13 +54,16 @@ std::optional<Arguments> ParseArguments(int argc, char** argv) {
                                   option == "--sequence" ? InputType::Sequence : InputType::Video;
                 args.input_path = argv[index];
             }
-        } else if (option == "--config" || option == "--output" || option == "--max-frames") {
+        } else if (option == "--config" || option == "--output" || option == "--max-frames" || option == "--temporal-config") {
             if (++index >= argc || std::string_view(argv[index]).empty() || argv[index][0] == '-') {
                 throw std::invalid_argument("Missing value for " + option);
             }
             if (option == "--config") {
                 if (!args.config_path.empty()) throw std::invalid_argument("Specify --config only once");
                 args.config_path = argv[index];
+            } else if (option == "--temporal-config") {
+                if (!args.temporal_config_path.empty()) throw std::invalid_argument("Specify --temporal-config only once");
+                args.temporal_config_path = argv[index];
             } else if (option == "--output") {
                 if (!args.output_path.empty()) throw std::invalid_argument("Specify --output only once");
                 args.output_path = argv[index];

@@ -37,6 +37,16 @@ ResultsWriter::ResultsWriter(const Arguments& args, const PipelineConfig& config
                        {"merge_distance", t.merge_distance}, {"max_mean_distance", t.max_mean_distance},
                        {"joining_enabled", config.segment_extractor.joining_enabled}}}
     };
+    if (!args.temporal_config_path.empty()) {
+        const auto temporal = YAML::LoadFile(args.temporal_config_path.string());
+        metadata["schema_version"] = 2;
+        metadata["temporal"] = {{"method", "motion_compensated_line_stabilizer_v1"}, {"working_max_width", 640},
+            {"timing_scope", "temporal_ms includes motion estimation and association; additional to Pipeline"}};
+        for (const auto& entry : temporal) {
+            const auto key = entry.first.as<std::string>();
+            metadata["temporal"][key] = entry.second.as<double>();
+        }
+    }
     stream_.open(args.output_path);
     if (!stream_) throw std::runtime_error("Cannot create results file: " + args.output_path.string());
     stream_ << metadata.dump() << '\n';
@@ -44,7 +54,8 @@ ResultsWriter::ResultsWriter(const Arguments& args, const PipelineConfig& config
 }
 
 void ResultsWriter::Write(const InputSource& input, const cv::Mat& frame,
-                           const std::vector<Segment>& segments, const PipelineTimings& timings) {
+                           const std::vector<Segment>& segments, const PipelineTimings& timings,
+                           const std::vector<Segment>* raw_segments, double temporal_ms) {
     if (!stream_.is_open()) return;
     auto endpoints = nlohmann::json::array();
     for (const auto& segment : segments) {
@@ -59,6 +70,11 @@ void ResultsWriter::Write(const InputSource& input, const cv::Mat& frame,
                         {"postprocessing", timings.postprocess_ms}, {"extraction", timings.extraction_ms},
                         {"pipeline", timings.total_ms}}}
     };
+    if (raw_segments) {
+        record["temporal_ms"] = temporal_ms;
+        record["raw_segments"] = nlohmann::json::array();
+        for (const auto& s : *raw_segments) record["raw_segments"].push_back({s.x1,s.y1,s.x2,s.y2});
+    }
     stream_ << record.dump() << '\n';
     if (!stream_) throw std::runtime_error("Cannot write frame results");
     ++frames_;

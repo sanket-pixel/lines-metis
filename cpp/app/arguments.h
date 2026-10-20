@@ -15,6 +15,7 @@ struct Arguments {
     int camera_index = 0;
     std::filesystem::path config_path;
     std::filesystem::path output_path;
+    std::filesystem::path temporal_config_path;
     bool show = false;
     bool profile = false;
     std::size_t max_frames = 0;  // Zero means no limit.

@@ -1,0 +1,49 @@
+{
+  "frames": 2921,
+  "mean_segments": {
+    "raw": 93.26805888394385,
+    "temporal": 83.64019171516604
+  },
+  "mean_absolute_count_change": {
+    "raw": 6.967808219178083,
+    "temporal": 4.949315068493151
+  },
+  "temporal_ms": {
+    "mean": 7.1485604036288946,
+    "p95": 10.386304
+  },
+  "note": "Count change measures population stability, not accuracy or geometric jitter. Fewer displayed lines can lower it.",
+  "motion_aligned_mask_churn": {
+    "raw": 0.15686111420559454,
+    "temporal": 0.11080030822867644
+  },
+  "clipped_symmetric_mask_distance_320px": {
+    "raw": 0.9046143412794152,
+    "temporal": 0.7424763358273188
+  },
+  "evaluation": {
+    "pairs": 584,
+    "stride": 5,
+    "resolution": [
+      320,
+      240
+    ],
+    "method": "Backward dense Farneback warps previous line mask; symmetric distance >1.5px is unmatched. No accuracy ground truth.",
+    "caveat": "Filtering away unstable but valid lines can improve this proxy. Inspect the matched side-by-side footage."
+  },
+  "artifacts": {
+    "results/freiburg2_pioneer_slam_aipu_calib200_balanced_detections.jsonl": {
+      "sha256": "1e0a3a9dd482f91c8d1d80cab3a76b97ff47ca376b6af3b96582ae121f869658"
+    },
+    "results/freiburg2_balanced_temporal_v2.jsonl": {
+      "sha256": "77b2e482c0d1038f0fcc17b20042770f48e20c40ab5a86067b69ab550ed826b4"
+    },
+    "configs/temporal.yaml": {
+      "sha256": "902b6d28b0441b0f76160200d73cf7c6b926f42177594406fd05b9a67971d61f"
+    },
+    "cpp/src/temporal/line_stabilizer.cpp": {
+      "sha256": "3d9663cc0797cfc20b16c11f35f506029fc5508fffbe27ed4126b95bdffb0f85"
+    }
+  },
+  "timing_caveat": "Measured on this workstation during cached replay; CPU contention affects timing. Not an end-to-end real-time benchmark."
+}

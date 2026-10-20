@@ -5,7 +5,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs videoio highgui)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs videoio highgui video)
 find_package(yaml-cpp REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
@@ -41,6 +41,13 @@ set_target_properties(axruntime::axruntime PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${AXRUNTIME_INCLUDE_DIR}"
 )
 
+add_library(lines_temporal STATIC src/temporal/line_stabilizer.cpp)
+target_compile_features(lines_temporal PUBLIC cxx_std_17)
+target_include_directories(lines_temporal PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(lines_temporal SYSTEM PUBLIC ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(lines_temporal PUBLIC opencv_core opencv_imgproc opencv_video PRIVATE yaml-cpp::yaml-cpp)
+target_compile_options(lines_temporal PRIVATE -Wall -Wextra -Wpedantic)
+
 add_library(lines_cpp STATIC
 
     src/common/config.cpp
@@ -71,7 +78,17 @@ add_executable(lines_metis
     app/output_window.cpp
     app/results_writer.cpp
 )
-target_link_libraries(lines_metis PRIVATE lines_cpp opencv_imgcodecs opencv_videoio opencv_highgui
+target_link_libraries(lines_metis PRIVATE lines_cpp lines_temporal opencv_imgcodecs opencv_videoio opencv_highgui
     nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp)
 set_target_properties(lines_metis PROPERTIES CXX_EXTENSIONS OFF)
 target_compile_options(lines_metis PRIVATE -Wall -Wextra -Wpedantic)
+
+add_executable(stabilize_results app/stabilize_results.cpp)
+target_link_libraries(stabilize_results PRIVATE lines_temporal opencv_imgcodecs nlohmann_json::nlohmann_json)
+target_compile_options(stabilize_results PRIVATE -Wall -Wextra -Wpedantic)
+
+if(BUILD_TESTING)
+    add_executable(line_stabilizer_test tests/line_stabilizer_test.cpp)
+    target_link_libraries(line_stabilizer_test PRIVATE lines_temporal)
+    add_test(NAME line_stabilizer COMMAND line_stabilizer_test)
+endif()

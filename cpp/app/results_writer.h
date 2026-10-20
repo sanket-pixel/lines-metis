@@ -12,7 +12,8 @@ class ResultsWriter {
 public:
     ResultsWriter(const Arguments& args, const PipelineConfig& config);
     void Write(const InputSource& input, const cv::Mat& frame,
-               const std::vector<Segment>& segments, const PipelineTimings& timings);
+               const std::vector<Segment>& segments, const PipelineTimings& timings,
+               const std::vector<Segment>* raw_segments = nullptr, double temporal_ms = 0);
     void Finish();
 
 private:

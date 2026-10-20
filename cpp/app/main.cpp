@@ -4,6 +4,9 @@
 #include "output_window.h"
 #include "results_writer.h"
 #include "pipeline/pipeline.h"
+#include "temporal/line_stabilizer.h"
+#include <chrono>
+#include <optional>
 
 #include <algorithm>
 #include <iostream>
@@ -63,15 +66,29 @@ void RunInput(const lines::app::Arguments& args, const lines::PipelineConfig& co
     cv::Mat frame;
     if (!input.Read(frame)) throw std::runtime_error("Input contains no readable frames");
 
+    std::optional<lines::LineStabilizer> stabilizer;
+    if (!args.temporal_config_path.empty()) {
+        stabilizer.emplace(lines::LoadTemporalConfig(args.temporal_config_path));
+        std::cout << "Temporal stabilization enabled (separate stage after Pipeline)\n";
+    }
     lines::app::ResultsWriter results(args, config);
     lines::Pipeline pipeline(config);
+    double temporal_total_ms = 0;
     lines::app::OutputWindow window(args.show);
     std::size_t frame_number = 0;
     lines::PipelineTimings total;
     do {
         if (stop_requested) break;
         lines::PipelineTimings timings;
-        const auto segments = pipeline.Process(frame, (args.profile || !args.output_path.empty()) ? &timings : nullptr);
+        const auto raw_segments = pipeline.Process(frame, (args.profile || !args.output_path.empty()) ? &timings : nullptr);
+        auto segments = raw_segments;
+        double temporal_ms = 0;
+        if (stabilizer) {
+            const auto start = std::chrono::steady_clock::now();
+            segments = stabilizer->Process(frame, raw_segments, input.timestamp_seconds());
+            temporal_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-start).count();
+            temporal_total_ms += temporal_ms;
+        }
         if (args.profile) {
             total.preprocess_ms += timings.preprocess_ms;
             total.inference_ms += timings.inference_ms;
@@ -79,7 +96,7 @@ void RunInput(const lines::app::Arguments& args, const lines::PipelineConfig& co
             total.extraction_ms += timings.extraction_ms;
             total.total_ms += timings.total_ms;
         }
-        results.Write(input, frame, segments, timings);
+        results.Write(input, frame, segments, timings, stabilizer ? &raw_segments : nullptr, temporal_ms);
         ++frame_number;
         if (!args.show && args.output_path.empty()) {
             std::cout << "Frame " << frame_number << ": " << frame.cols << " x " << frame.rows << '\n';
@@ -92,7 +109,11 @@ void RunInput(const lines::app::Arguments& args, const lines::PipelineConfig& co
     } while (!stop_requested && (args.max_frames == 0 || frame_number < args.max_frames) && input.Read(frame));
     results.Finish();
     std::cout << "Processed " << frame_number << " frame(s)\n";
-    if (args.profile && frame_number > 0) PrintProfile(total, frame_number);
+    if (args.profile && frame_number > 0) {
+        PrintProfile(total, frame_number);
+        if (stabilizer) std::cout << "  Temporal:       " << temporal_total_ms / frame_number
+                                  << " ms (additional to Pipeline total)\n";
+    }
 }
 
 }
