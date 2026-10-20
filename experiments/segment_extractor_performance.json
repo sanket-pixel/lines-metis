@@ -1,0 +1,100 @@
+{
+  "cpu": "AMD Ryzen 7 3700X",
+  "build": "Release, GCC -O3, no fast-math",
+  "reference_commit": "5d918af",
+  "presets": {
+    "strict": {
+      "bit_exact_endpoints_and_order": true,
+      "config": "configs/strict.yaml",
+      "frames": 2921,
+      "opencv_threads": 4,
+      "optimized": {
+        "max_ms": 3.72902,
+        "mean_ms": 1.8027672548784697,
+        "median_ms": 1.773269,
+        "p95_ms": 2.60729
+      },
+      "reference": {
+        "max_ms": 15.0403,
+        "mean_ms": 3.276736843204383,
+        "median_ms": 2.97903,
+        "p95_ms": 4.94565
+      },
+      "repeats": 2,
+      "scope": "Extraction only; cached real fields, alternating order, four warmups. Excludes inference, I/O and temporal layer.",
+      "segments": 181341,
+      "source_frames": 2921,
+      "speedup": 1.817615021760132,
+      "stride": 1
+    },
+    "balanced": {
+      "bit_exact_endpoints_and_order": true,
+      "config": "configs/balanced.yaml",
+      "frames": 2921,
+      "opencv_threads": 4,
+      "optimized": {
+        "max_ms": 5.79239,
+        "mean_ms": 2.466823291338576,
+        "median_ms": 2.42344,
+        "p95_ms": 3.6118
+      },
+      "reference": {
+        "max_ms": 22.89419,
+        "mean_ms": 5.218040220244186,
+        "median_ms": 4.731819,
+        "p95_ms": 8.60908
+      },
+      "repeats": 3,
+      "scope": "Extraction only; cached real fields, alternating order, four warmups. Excludes inference, I/O and temporal layer.",
+      "segments": 272436,
+      "source_frames": 2921,
+      "speedup": 2.115287397587653,
+      "stride": 1
+    },
+    "relaxed": {
+      "bit_exact_endpoints_and_order": true,
+      "config": "configs/relaxed.yaml",
+      "frames": 2921,
+      "opencv_threads": 4,
+      "optimized": {
+        "max_ms": 8.4825,
+        "mean_ms": 3.5631033611776703,
+        "median_ms": 3.5203,
+        "p95_ms": 5.09833
+      },
+      "reference": {
+        "max_ms": 34.402699,
+        "mean_ms": 9.071278695994492,
+        "median_ms": 8.225597,
+        "p95_ms": 16.822867
+      },
+      "repeats": 2,
+      "scope": "Extraction only; cached real fields, alternating order, four warmups. Excludes inference, I/O and temporal layer.",
+      "segments": 339002,
+      "source_frames": 2921,
+      "speedup": 2.5458926605475374,
+      "stride": 1
+    }
+  },
+  "live_pipeline": {
+    "frames": 600,
+    "same_endpoints_and_order": true,
+    "scope": "Full Pipeline, same first 600 Freiburg frames, balanced, no temporal; includes first frame, excludes capture/export",
+    "reference": {
+      "extraction": 9.123814083333333,
+      "inference": 20.70804221,
+      "pipeline": 31.81914550666667,
+      "postprocessing": 0.77531275,
+      "preprocessing": 1.2117069466666668
+    },
+    "optimized": {
+      "extraction": 4.4901342600000005,
+      "inference": 20.738268425,
+      "pipeline": 27.327334206666663,
+      "postprocessing": 0.8554947783333333,
+      "preprocessing": 1.2431548416666667
+    }
+  },
+  "fields_cache_sha256": "e298c9c75ee752d74433e4b62dd070d4bc64522810ee330729c14b5b1f00f3a8",
+  "source_sha256": "abc6010165dd04e498618502468bb1569365478e2e959bddfa7fd54b43dee6f6"
+}

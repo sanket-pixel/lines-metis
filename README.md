@@ -240,3 +240,10 @@ On `experiment/temporal-consistency`, add
 smoothing, confirmation and brief supported gap recovery after the Pipeline.
 The default frame-by-frame path and frozen showcase remain unchanged. See the
 [method, replay commands and evaluation](experiments/temporal_consistency.md).
+
+### Extractor performance branch
+
+`optimization/segment-extractor` adds exact geometry/trigonometry caching, stable
+radix seed sorting and parallel region fitting. See the
+[optimization and reproducible benchmark](experiments/segment_extractor_optimization.md).
+The temporal layer remains optional, and the frozen baseline stays on `main`.

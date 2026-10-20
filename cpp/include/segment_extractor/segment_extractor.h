@@ -2,6 +2,7 @@
 #pragma once
 #include "common/config.h"
 #include "common/types.h"
+#include <cstddef>
 #include <vector>
 
 namespace lines {
@@ -17,7 +18,7 @@ private:
     std::vector<Segment> JoinSegments(std::vector<Segment> segments, const float* distance,
                                       const float* orientation, int width, int height) const;
     std::vector<Segment> SuppressDuplicates(std::vector<Segment> segments) const;
-    bool Fit(const std::vector<int>& region, const float* distance,
+    bool Fit(const int* region, std::size_t region_size, const float* distance,
              int width, Segment& segment) const;
     bool Validate(const Segment& segment, const float* distance,
                   const float* orientation, int width, int height) const;

@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "segment_extractor/segment_extractor.h"
+#include <opencv2/core/utility.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -20,9 +23,41 @@ float Angle(const Segment& segment) {
     return std::atan2(segment.y2 - segment.y1, segment.x2 - segment.x1);
 }
 
+struct SegmentGeometry {
+    float length, angle, ux, uy;
+    explicit SegmentGeometry(const Segment& segment)
+        : length(Length(segment)), angle(Angle(segment)),
+          ux((segment.x2-segment.x1)/length), uy((segment.y2-segment.y1)/length) {}
+};
+
 float AngleError(float first, float second) {
+    const float difference = std::abs(first - second);
+    if (difference <= pi / 2) return difference;
+    if (difference <= pi) return pi - difference;
+    if (double(difference) <= 1.5 * double(pi)) return difference - pi;
     return std::abs(std::remainder(first - second, pi));
 }
+
+class OrientationCache {
+public:
+    struct Direction { double cosine, sine; };
+    Direction Get(float angle) {
+        std::uint32_t key;
+        std::memcpy(&key, &angle, sizeof(key));
+        auto hash = key ^ (key >> 16);
+        hash *= 0x7feb352dU;
+        hash ^= hash >> 15;
+        auto& entry = entries_[hash & (entries_.size()-1)];
+        if (entry.key != key) {
+            entry.key = key;
+            entry.direction = {std::cos(2.0 * angle), std::sin(2.0 * angle)};
+        }
+        return entry.direction;
+    }
+private:
+    struct Entry { std::uint32_t key = 0x7f800000U; Direction direction{}; };
+    std::array<Entry, 512> entries_{};
+};
 
 float Sample(const float* field, float x, float y, int width, int height) {
     x = std::clamp(x, 0.0f, float(width - 1));
@@ -64,6 +99,25 @@ bool ClipToImage(Segment& segment, int width, int height) {
     return true;
 }
 
+void SortSeeds(std::vector<int>& seeds, const float* distance) {
+    static_assert(sizeof(float) == sizeof(std::uint32_t) && std::numeric_limits<float>::is_iec559);
+    // Nonnegative finite IEEE floats sort by bits. Normalize signed zero to keep ties stable.
+    auto key = [distance](int index) {
+        std::uint32_t bits;
+        std::memcpy(&bits, distance + index, sizeof(bits));
+        return (bits & 0x7fffffffU) == 0 ? 0U : bits;
+    };
+    std::vector<int> scratch(seeds.size());
+    for (int shift : {0, 11, 22}) {
+        std::array<std::size_t, 2048> offsets{};
+        for (int index : seeds) ++offsets[(key(index) >> shift) & 2047];
+        std::size_t offset = 0;
+        for (auto& bucket : offsets) { const auto size = bucket; bucket = offset; offset += size; }
+        for (int index : seeds) scratch[offsets[(key(index) >> shift) & 2047]++] = index;
+        seeds.swap(scratch);
+    }
+}
+
 void SortByLength(std::vector<Segment>& segments) {
     std::stable_sort(segments.begin(), segments.end(), [](const auto& first, const auto& second) {
         return Length(first) > Length(second);
@@ -75,11 +129,12 @@ SegmentExtractor::SegmentExtractor(SegmentExtractorConfig config) : config_(std:
     ValidateSegmentThresholds(config_.thresholds);
 }
 
-bool SegmentExtractor::Fit(const std::vector<int>& region, const float* distance,
+bool SegmentExtractor::Fit(const int* region, std::size_t region_size, const float* distance,
                            int width, Segment& segment) const {
     const auto& thresholds = config_.thresholds;
     double weight_sum = 0, mean_x = 0, mean_y = 0;
-    for (int index : region) {
+    for (std::size_t sample = 0; sample < region_size; ++sample) {
+        const int index = region[sample];
         const double weight = std::pow(std::max(0.01f, thresholds.max_distance - distance[index]), 2);
         weight_sum += weight;
         mean_x += weight * (index % width);
@@ -89,7 +144,8 @@ bool SegmentExtractor::Fit(const std::vector<int>& region, const float* distance
     mean_x /= weight_sum;
     mean_y /= weight_sum;
     double xx = 0, xy = 0, yy = 0;
-    for (int index : region) {
+    for (std::size_t sample = 0; sample < region_size; ++sample) {
+        const int index = region[sample];
         const double weight = std::pow(std::max(0.01f, thresholds.max_distance - distance[index]), 2);
         const double dx = index % width - mean_x, dy = index / width - mean_y;
         xx += weight * dx * dx;
@@ -100,7 +156,8 @@ bool SegmentExtractor::Fit(const std::vector<int>& region, const float* distance
     const double angle = 0.5 * std::atan2(2 * xy, xx - yy);
     const double ux = std::cos(angle), uy = std::sin(angle);
     double low = std::numeric_limits<double>::infinity(), high = -low;
-    for (int index : region) {
+    for (std::size_t sample = 0; sample < region_size; ++sample) {
+        const int index = region[sample];
         const double projection = (index % width - mean_x) * ux + (index / width - mean_y) * uy;
         low = std::min(low, projection);
         high = std::max(high, projection);
@@ -139,6 +196,9 @@ bool SegmentExtractor::Validate(const Segment& segment, const float* distance,
             unsupported_run += step;
             longest_gap = std::max(longest_gap, unsupported_run);
         }
+        if (longest_gap > thresholds.merge_gap + 1.0f ||
+            distance_sum / samples > thresholds.max_mean_distance ||
+            double(supported + samples - index - 1) / samples < thresholds.min_support) return false;
     }
     return double(supported) / samples >= thresholds.min_support &&
            distance_sum / samples <= thresholds.max_mean_distance &&
@@ -150,16 +210,19 @@ std::vector<Segment> SegmentExtractor::JoinSegments(std::vector<Segment> segment
                                                    int width, int height) const {
     const auto& thresholds = config_.thresholds;
     SortByLength(segments);
+    std::vector<SegmentGeometry> geometry;
+    geometry.reserve(segments.size());
+    for (const auto& segment : segments) geometry.emplace_back(segment);
     bool changed = true;
     while (changed) {
         changed = false;
         for (std::size_t first = 0; first < segments.size() && !changed; ++first) {
             const auto a = segments[first];
-            const float length_a = Length(a);
-            const float ux = (a.x2 - a.x1) / length_a, uy = (a.y2 - a.y1) / length_a;
+            const float length_a = geometry[first].length;
+            const float ux = geometry[first].ux, uy = geometry[first].uy;
             for (std::size_t second = first + 1; second < segments.size(); ++second) {
                 const auto b = segments[second];
-                if (AngleError(Angle(a), Angle(b)) > thresholds.angle_tolerance / 2) continue;
+                if (AngleError(geometry[first].angle, geometry[second].angle) > thresholds.angle_tolerance / 2) continue;
                 const float dx1 = b.x1 - a.x1, dy1 = b.y1 - a.y1;
                 const float dx2 = b.x2 - a.x1, dy2 = b.y2 - a.y1;
                 if (std::max(std::abs(-dx1 * uy + dy1 * ux), std::abs(-dx2 * uy + dy2 * ux)) >
@@ -169,7 +232,7 @@ std::vector<Segment> SegmentExtractor::JoinSegments(std::vector<Segment> segment
                                                         std::min(projection1, projection2) - length_a));
                 if (gap > thresholds.merge_gap) continue;
 
-                const float length_b = Length(b);
+                const float length_b = geometry[second].length;
                 float vx = b.x2 - b.x1, vy = b.y2 - b.y1;
                 if (vx * ux + vy * uy < 0) { vx = -vx; vy = -vy; }
                 const float direction_x = (a.x2 - a.x1) + vx;
@@ -188,7 +251,9 @@ std::vector<Segment> SegmentExtractor::JoinSegments(std::vector<Segment> segment
                 Segment joined{cx + *low * tx, cy + *low * ty, cx + *high * tx, cy + *high * ty};
                 if (!ClipToImage(joined, width, height) || !Validate(joined, distance, orientation, width, height)) continue;
                 segments[first] = joined;
+                geometry[first] = SegmentGeometry(joined);
                 segments.erase(segments.begin() + second);
+                geometry.erase(geometry.begin() + second);
                 changed = true;
                 break;
             }
@@ -201,12 +266,16 @@ std::vector<Segment> SegmentExtractor::SuppressDuplicates(std::vector<Segment> s
     const auto& thresholds = config_.thresholds;
     SortByLength(segments);
     std::vector<Segment> result;
+    std::vector<SegmentGeometry> geometry;
     for (const auto& segment : segments) {
+        const SegmentGeometry candidate(segment);
         bool duplicate = false;
-        for (const auto& kept : result) {
-            if (AngleError(Angle(kept), Angle(segment)) > thresholds.angle_tolerance / 2) continue;
-            const float length = Length(kept);
-            const float ux = (kept.x2 - kept.x1) / length, uy = (kept.y2 - kept.y1) / length;
+        for (std::size_t index = 0; index < result.size(); ++index) {
+            const auto& kept = result[index];
+            const auto& info = geometry[index];
+            if (AngleError(info.angle, candidate.angle) > thresholds.angle_tolerance / 2) continue;
+            const float length = info.length;
+            const float ux = info.ux, uy = info.uy;
             const float dx1 = segment.x1 - kept.x1, dy1 = segment.y1 - kept.y1;
             const float dx2 = segment.x2 - kept.x1, dy2 = segment.y2 - kept.y1;
             if (std::max(std::abs(-dx1 * uy + dy1 * ux), std::abs(-dx2 * uy + dy2 * ux)) >
@@ -218,7 +287,7 @@ std::vector<Segment> SegmentExtractor::SuppressDuplicates(std::vector<Segment> s
                 break;
             }
         }
-        if (!duplicate) result.push_back(segment);
+        if (!duplicate) { result.push_back(segment); geometry.push_back(candidate); }
     }
     return result;
 }
@@ -238,11 +307,12 @@ std::vector<Segment> SegmentExtractor::Process(const float* distance, const floa
         }
         if (distance[index] < thresholds.max_distance) seeds.push_back(index);
     }
-    std::stable_sort(seeds.begin(), seeds.end(), [distance](int first, int second) {
-        return distance[first] < distance[second];
-    });
+    SortSeeds(seeds, distance);
     std::vector<unsigned char> visited(count, 0);
-    std::vector<int> region;
+    std::vector<int> region, region_pixels;
+    struct Region { std::size_t begin, size; };
+    std::vector<Region> regions;
+    OrientationCache directions;
     std::vector<Segment> segments;
     for (int seed : seeds) {
         if (visited[seed]) continue;
@@ -250,7 +320,11 @@ std::vector<Segment> SegmentExtractor::Process(const float* distance, const floa
         region.push_back(seed);
         visited[seed] = 1;
         double sum_x = seed % width, sum_y = seed / width;
-        double sum_cos = std::cos(2.0 * orientation[seed]), sum_sin = std::sin(2.0 * orientation[seed]);
+        const auto seed_direction = directions.Get(orientation[seed]);
+        double sum_cos = seed_direction.cosine, sum_sin = seed_direction.sine;
+        bool direction_changed = true;
+        float angle = 0, sine = 0, cosine = 0;
+        double cx = 0, cy = 0;
         for (std::size_t head = 0; head < region.size(); ++head) {
             const int index = region[head], x = index % width, y = index / width;
             for (int dy = -1; dy <= 1; ++dy) {
@@ -259,27 +333,47 @@ std::vector<Segment> SegmentExtractor::Process(const float* distance, const floa
                     if ((dx == 0 && dy == 0) || nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
                     const int next = ny * width + nx;
                     if (visited[next] || distance[next] >= thresholds.max_distance) continue;
-                    const float angle = float(0.5 * std::atan2(sum_sin, sum_cos));
-                    if (AngleError(orientation[next], angle) >= thresholds.angle_tolerance ||
-                        AngleError(orientation[next], orientation[seed]) >= thresholds.angle_tolerance) continue;
-                    const double cx = sum_x / region.size(), cy = sum_y / region.size();
-                    const double offset = -(nx - cx) * std::sin(angle) + (ny - cy) * std::cos(angle);
+                    if (AngleError(orientation[next], orientation[seed]) >= thresholds.angle_tolerance) continue;
+                    if (direction_changed) {
+                        angle = float(0.5 * std::atan2(sum_sin, sum_cos));
+                        sine = std::sin(angle); cosine = std::cos(angle);
+                        cx = sum_x / region.size(); cy = sum_y / region.size();
+                        direction_changed = false;
+                    }
+                    if (AngleError(orientation[next], angle) >= thresholds.angle_tolerance) continue;
+                    const double offset = -(nx - cx) * sine + (ny - cy) * cosine;
                     if (std::abs(offset) > thresholds.region_radius) continue;
                     visited[next] = 1;
                     region.push_back(next);
                     sum_x += nx;
                     sum_y += ny;
-                    sum_cos += std::cos(2.0 * orientation[next]);
-                    sum_sin += std::sin(2.0 * orientation[next]);
+                    const auto direction = directions.Get(orientation[next]);
+                    sum_cos += direction.cosine;
+                    sum_sin += direction.sine;
+                    direction_changed = true;
                 }
             }
         }
-        Segment segment{};
-        if (region.size() >= std::size_t(thresholds.min_pixels) && Fit(region, distance, width, segment) &&
-            ClipToImage(segment, width, height) && Validate(segment, distance, orientation, width, height)) {
-            segments.push_back(segment);
+        if (region.size() >= std::size_t(thresholds.min_pixels)) {
+            regions.push_back({region_pixels.size(), region.size()});
+            region_pixels.insert(region_pixels.end(), region.begin(), region.end());
         }
     }
+    std::vector<Segment> fitted(regions.size());
+    std::vector<unsigned char> accepted(regions.size());
+    auto fit_regions = [&](const cv::Range& range) {
+        for (int index = range.start; index < range.end; ++index) {
+            auto& segment = fitted[index];
+            const auto& region = regions[index];
+            accepted[index] = Fit(region_pixels.data()+region.begin, region.size, distance, width, segment) &&
+                ClipToImage(segment, width, height) && Validate(segment, distance, orientation, width, height);
+        }
+    };
+    // Seed growth stays ordered. Independent fits write separate slots, then compact in seed order.
+    if (regions.size() >= 32) cv::parallel_for_(cv::Range(0, int(regions.size())), fit_regions, 4);
+    else fit_regions(cv::Range(0, int(regions.size())));
+    for (std::size_t index = 0; index < regions.size(); ++index)
+        if (accepted[index]) segments.push_back(fitted[index]);
     if (config_.joining_enabled) segments = JoinSegments(std::move(segments), distance, orientation, width, height);
     return SuppressDuplicates(std::move(segments));
 }

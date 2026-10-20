@@ -88,6 +88,18 @@ target_link_libraries(stabilize_results PRIVATE lines_temporal opencv_imgcodecs 
 target_compile_options(stabilize_results PRIVATE -Wall -Wextra -Wpedantic)
 
 if(BUILD_TESTING)
+    add_library(segment_reference STATIC tests/reference/reference_segment_extractor.cpp)
+    target_link_libraries(segment_reference PUBLIC lines_cpp)
+    add_executable(segment_extractor_parity_test tests/segment_extractor_parity_test.cpp)
+    target_link_libraries(segment_extractor_parity_test PRIVATE segment_reference)
+    add_test(NAME segment_extractor_parity COMMAND segment_extractor_parity_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/../configs/strict.yaml
+        ${CMAKE_CURRENT_SOURCE_DIR}/../configs/balanced.yaml
+        ${CMAKE_CURRENT_SOURCE_DIR}/../configs/relaxed.yaml)
+    add_executable(cache_extraction_fields tests/cache_extraction_fields.cpp)
+    target_link_libraries(cache_extraction_fields PRIVATE lines_cpp opencv_imgcodecs)
+    add_executable(benchmark_segment_extractor tests/benchmark_segment_extractor.cpp)
+    target_link_libraries(benchmark_segment_extractor PRIVATE segment_reference nlohmann_json::nlohmann_json)
     add_executable(line_stabilizer_test tests/line_stabilizer_test.cpp)
     target_link_libraries(line_stabilizer_test PRIVATE lines_temporal)
     add_test(NAME line_stabilizer COMMAND line_stabilizer_test)
