@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#include "pipeline/pipeline.h"
+#include "pipeline.h"
 
 #include <opencv2/videoio.hpp>
 #include <opencv2/imgproc.hpp>

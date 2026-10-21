@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#include "postprocessing/postprocessing.h"
+#include "postprocessing.h"
 
 #include <cmath>
 #include <limits>

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#include "segment_extractor/segment_extractor.h"
+#include "segment_extractor.h"
 #include <opencv2/core/utility.hpp>
 
 #include <algorithm>

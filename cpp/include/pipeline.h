@@ -4,9 +4,9 @@
 #include "common/config.h"
 #include "common/types.h"
 #include "inference/aipu_inference.h"
-#include "preprocessing/preprocessing.h"
-#include "postprocessing/postprocessing.h"
-#include "segment_extractor/segment_extractor.h"
+#include "preprocessing.h"
+#include "postprocessing.h"
+#include "segment_extractor.h"
 
 #include <vector>
 

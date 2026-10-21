@@ -41,7 +41,7 @@ set_target_properties(axruntime::axruntime PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${AXRUNTIME_INCLUDE_DIR}"
 )
 
-add_library(lines_temporal STATIC src/temporal/line_stabilizer.cpp)
+add_library(lines_temporal STATIC src/line_stabilizer.cpp)
 target_compile_features(lines_temporal PUBLIC cxx_std_17)
 target_include_directories(lines_temporal PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(lines_temporal SYSTEM PUBLIC ${OpenCV_INCLUDE_DIRS})
@@ -53,14 +53,14 @@ add_library(lines_cpp STATIC
     src/common/config.cpp
     src/common/types.cpp
 
-    src/preprocessing/preprocessing.cpp
+    src/preprocessing.cpp
     src/inference/aipu_context.cpp
     src/inference/aipu_inference.cpp
-    src/postprocessing/postprocessing.cpp
+    src/postprocessing.cpp
 
-    src/segment_extractor/segment_extractor.cpp
+    src/segment_extractor.cpp
 
-    src/pipeline/pipeline.cpp
+    src/pipeline.cpp
 )
 
 target_compile_features(lines_cpp PUBLIC cxx_std_17)

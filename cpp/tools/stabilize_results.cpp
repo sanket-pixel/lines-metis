@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#include "temporal/line_stabilizer.h"
+#include "line_stabilizer.h"
 #include <opencv2/imgcodecs.hpp>
 #include <nlohmann/json.hpp>
 #include <chrono>

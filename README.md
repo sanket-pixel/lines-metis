@@ -8,8 +8,8 @@ have been removed. The app processes video and reports stage timings; a Python r
 python/                 model, inference reference, export and compilation
 cpp/app/main.cpp        video runner and optional stage profiling
 cpp/tools/              standalone temporal replay tool
-cpp/include/            C++ module headers
-cpp/src/                module implementations
+cpp/include/            module headers, with common/ and inference/ subfolders
+cpp/src/                implementations, with common/ and inference/ subfolders
 weights/torch/          official MegaDepth weights and provenance
 weights/onnx/           static FP32 model
 weights/aipu/           compiled model and runtime manifest
@@ -163,7 +163,7 @@ and `pi*orientation_fraction`.
 The C++ extractor grows regions from these fields, fits weighted PCA segments,
 validates field support, joins supported collinear pieces when enabled and
 suppresses duplicates. Endpoints map back with the pixel-center
-resize convention. See [the native API](cpp/include/segment_extractor/segment_extractor.h).
+resize convention. See [the native API](cpp/include/segment_extractor.h).
 
 This extractor differs from upstream DeepLSD's guided LSD: it omits image-gradient
 disambiguation, rectangle refinement and NFA significance testing. It can miss
