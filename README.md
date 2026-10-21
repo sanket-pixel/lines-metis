@@ -42,6 +42,12 @@ make video
 make profile
 ```
 
+`make video` saves turquoise line overlays to `results/sample_outout.mp4`, using
+the input video's dimensions and playback FPS. The output directory is created
+automatically. Set `OUTPUT=results/my_video.mp4` to choose another file; rerunning
+replaces the selected output. `make profile` measures the Pipeline without writing
+a video.
+
 The default video is `data/sample.mp4`: the first 600 Freiburg 2 frames played at
 30 FPS (20 seconds), encoded losslessly. It stays local with the dataset.
 Override it with `VIDEO=/path/to/video.mp4`. Recreate the sample from local frames
@@ -67,11 +73,13 @@ The equivalent direct invocation is:
 ```
 
 The app accepts only `--video <path>`, `--config <config.yaml>` and optional
-`--profile` (`--help` prints usage). Press Ctrl+C to stop early. Profiling reports
+`--output <path>` / `--profile` (`--help` prints usage). Press Ctrl+C to stop early.
+Profiling reports
 mean preprocessing, inference, postprocessing, extraction and total Pipeline time,
 plus processing FPS. Measurements include the first frame and coordinate mapping;
-they exclude model loading, video decoding and console output. Without `--profile`,
-the app prints only the processed frame count. Use a Release build for timing.
+they exclude model loading, video decoding, drawing, encoding and console output.
+The app prints the processed frame count and the output path when saving a video.
+Use a Release build for timing.
 
 In CLion, select the `lines_metis` target and paste the same arguments into Program
 arguments. Paths inside YAML resolve relative to the YAML file. The selected
@@ -100,7 +108,7 @@ Previously saved detection exports remain available for Python visualization.
 JSONL contains metadata, one record per source frame, then a final frame-count
 summary. Each frame includes `segments` as `[x1,y1,x2,y2]` in original-image
 pixels and `timings_ms`. The renderer draws these endpoints directly, without
-mapping them a second time. The compact video app does not export detections.
+mapping them a second time. The compact video app does not export endpoint JSON.
 
 The Pipeline owns its AIPU context and four modules, reuses decoded-field buffers,
 and runs preprocessing, inference, postprocessing and segment extraction in order.

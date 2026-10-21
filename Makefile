@@ -14,6 +14,7 @@ BUILD_DIR ?= build
 JOBS ?= 4
 CONFIG ?= configs/default.yaml
 VIDEO ?= data/sample.mp4
+OUTPUT ?= results/sample_outout.mp4
 AXRUNTIME_ROOT ?= /opt/axelera
 
 .PHONY: build video profile infer export compile
@@ -26,7 +27,7 @@ video profile:
 	@if [ -z "$(VIDEO)" ]; then echo 'Usage: make $@ VIDEO=/path/to/video.mp4 [CONFIG=configs/default.yaml]' >&2; exit 2; fi
 	@if [ ! -f "$(VIDEO)" ]; then echo 'Video file not found' >&2; exit 2; fi
 	+$(MAKE) build
-	"$(BUILD_DIR)/cpp/lines_metis" --video "$(VIDEO)" --config "$(CONFIG)" $(if $(filter profile,$@),--profile)
+	"$(BUILD_DIR)/cpp/lines_metis" --video "$(VIDEO)" --config "$(CONFIG)" $(if $(filter profile,$@),--profile,--output "$(OUTPUT)")
 
 infer:
 	@if [ "$(BACKEND)" = aipu ]; then \
