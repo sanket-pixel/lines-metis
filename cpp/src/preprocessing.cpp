@@ -45,10 +45,12 @@ std::int8_t Quantize(float value, float scale, float zero_point) {
     return static_cast<std::int8_t>(rounded);
 }
 }
-ResizeTransform Preprocessing::Process(const cv::Mat& image, cv::Mat& normalized) const {
-    if (image.empty() || image.type() != CV_8UC3) {
-        throw std::invalid_argument("Preprocessing requires a nonempty BGR uint8 image");
+ResizeTransform Preprocessing::Process(const cv::Mat& image, const AipuTensorInfo& input_info,
+                                      std::int8_t* input_buffer, std::size_t buffer_size) const {
+    if (image.empty() || image.type() != CV_8UC3 || !input_buffer) {
+        throw std::invalid_argument("Preprocessing requires a nonempty BGR uint8 image and valid input buffer");
     }
+    ValidateInputInfo(input_info, buffer_size);
 
     ResizeTransform transform;
     transform.original_width = image.cols;
@@ -60,37 +62,6 @@ ResizeTransform Preprocessing::Process(const cv::Mat& image, cv::Mat& normalized
     cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
     cv::resize(gray, gray, cv::Size(transform.network_width, transform.network_height),
                0, 0, cv::INTER_AREA);
-
-    if (normalized.size() != gray.size() || normalized.type() != CV_32FC1 ||
-        !normalized.isContinuous()) {
-        normalized = cv::Mat(gray.size(), CV_32FC1);
-    }
-    for (int row = 0; row < gray.rows; ++row) {
-        const auto* source = gray.ptr<unsigned char>(row);
-        auto* destination = normalized.ptr<float>(row);
-        for (int column = 0; column < gray.cols; ++column) {
-            destination[column] = float(source[column]) / 255.0f;
-        }
-    }
-    return transform;
-}
-
-ResizeTransform Preprocessing::Process(const cv::Mat& image, const AipuTensorInfo& input_info,
-                                      std::int8_t* input_buffer, std::size_t buffer_size) const {
-    cv::Mat normalized;
-    const auto transform = Process(image, normalized);
-    QuantizeAndPad(normalized, input_info, input_buffer, buffer_size);
-    return transform;
-}
-
-void Preprocessing::QuantizeAndPad(const cv::Mat& normalized, const AipuTensorInfo& input_info,
-                                  std::int8_t* input_buffer, std::size_t buffer_size) const {
-    ValidateInputInfo(input_info, buffer_size);
-    if (!input_buffer || normalized.type() != CV_32FC1 ||
-        normalized.rows != 240 || normalized.cols != 320 ||
-        !cv::checkRange(normalized, true, nullptr, 0.0, std::nextafter(1.0f, 2.0f))) {
-        throw std::invalid_argument("QuantizeAndPad requires a valid output buffer and normalized float32 [240,320] in [0,1]");
-    }
 
     const auto padding_value = static_cast<std::int8_t>(std::clamp(input_info.zero_point, -128, 127));
     std::fill_n(input_buffer, buffer_size, padding_value);
@@ -104,13 +75,15 @@ void Preprocessing::QuantizeAndPad(const cv::Mat& normalized, const AipuTensorIn
     const auto channel = static_cast<std::size_t>(input_info.padding[3].first);
     const float scale = static_cast<float>(input_info.scale);
     const float zero_point = static_cast<float>(input_info.zero_point);
-    for (int row = 0; row < normalized.rows; ++row) {
-        const auto* source = normalized.ptr<float>(row);
+    for (int row = 0; row < gray.rows; ++row) {
+        const auto* source = gray.ptr<unsigned char>(row);
         const auto row_offset = ((batch * height + row + top) * width + left) * channels + channel;
-        for (int column = 0; column < normalized.cols; ++column) {
-            input_buffer[row_offset + column * channels] = Quantize(source[column], scale, zero_point);
+        for (int column = 0; column < gray.cols; ++column) {
+            const float normalized = float(source[column]) / 255.0f;
+            input_buffer[row_offset + column * channels] = Quantize(normalized, scale, zero_point);
         }
     }
+    return transform;
 }
 
 }

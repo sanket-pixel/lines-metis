@@ -122,10 +122,11 @@ metadata. No stage-specific tensor settings are exposed in YAML.
 Quantization matches Python's float32 affine arithmetic, ties-to-even rounding
 and int8 saturation. All physical padding uses the saturated zero point. For the
 current model this produces NHWC `[1,242,322,64]`, with padding value `-128` even
-though the metadata zero point is `-131`.
-The end-to-end entry point currently composes the CPU stages internally; a future
-fused kernel can replace that implementation. The float reference and separate
-`QuantizeAndPad()` methods remain available for numerical verification.
+when the metadata zero point falls below the int8 range.
+Preprocessing exposes one `Process()` entry point, writing directly to the padded
+runtime input buffer without an intermediate float image. It preserves the
+float32 normalization and quantization arithmetic. A future fused kernel can
+replace this implementation behind the same interface.
 Postprocessing crops each output using its own padding, independently dequantizes
 the heads, then decodes `distance = 5*exp(-distance_normalized)` and
 `orientation = pi*orientation_fraction`. It reuses two contiguous row-major float
