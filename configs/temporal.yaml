@@ -1,7 +1,0 @@
-# Experimental causal layer after extraction; distances at 640px working width.
-confirmation_frames: 2
-max_missing_frames: 2
-observation_weight: 0.6
-max_angle_degrees: 10
-max_normal_distance: 4
-max_time_gap: 0.25

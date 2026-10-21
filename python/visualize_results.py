@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render cached lines-metis detections; no model execution or temporal filtering."""
+"""Render cached lines-metis detections without executing the model."""
 import argparse
 import json
 from pathlib import Path

@@ -7,7 +7,6 @@ have been removed. The app processes video and reports stage timings; a Python r
 ```text
 python/                 model, inference reference, export and compilation
 cpp/app/main.cpp        video runner and optional stage profiling
-cpp/tools/              standalone temporal replay tool
 cpp/include/            module headers, with common/ and inference/ subfolders
 cpp/src/                implementations, with common/ and inference/ subfolders
 weights/torch/          official MegaDepth weights and provenance
@@ -113,7 +112,7 @@ mapping them a second time. The compact video app does not export endpoint JSON.
 The Pipeline owns its AIPU context and four modules, reuses decoded-field buffers,
 and runs preprocessing, inference, postprocessing and segment extraction in order.
 It maps endpoints once to original-image coordinates and returns `std::vector<Segment>`.
-The video runner adds no temporal state or per-frame console diagnostics.
+The video runner processes each frame independently and prints one summary.
 
 Preprocessing converts BGR to grayscale, resizes to 320x240 with INTER_AREA,
 normalizes with `/255`, then quantizes and pads the backend input using runtime
@@ -226,15 +225,15 @@ detections and showcase artifacts. Git contains source, configs, licenses and
 provenance; datasets, model binaries, generated results, build products and IDE
 state stay local. Result links above refer to locally generated files.
 
-### Temporal consistency experiment
+### Performance
 
-The temporal module and standalone `stabilize_results` tool remain available for
-cached sequence experiments. They are separate from the video profiling app.
-See the [method, replay commands and evaluation](experiments/temporal_consistency.md).
+The optimized extractor caches geometry and trigonometry, uses stable radix seed
+sorting, and fits independent regions in parallel while preserving output order.
+Balanced remains the default preset.
 
-### Extractor performance branch
-
-`optimization/segment-extractor` adds exact geometry/trigonometry caching, stable
-radix seed sorting and parallel region fitting. See the
-[optimization and reproducible benchmark](experiments/segment_extractor_optimization.md).
-The temporal layer remains optional, and the frozen baseline stays on `main`.
+A recorded run over all 2,921 Freiburg frames with the 200-frame-calibrated model
+averaged 27.4 ms per Pipeline frame (36.5 FPS), including 4.5 ms for extraction.
+These timings include the first frame and coordinate mapping, and exclude video
+I/O, rendering and encoding. The full optimized showcase is saved locally as
+`results/lines_metis_balanced_optimized_showcase_full.mp4`, with measurements in
+`results/lines_metis_balanced_optimized_metrics.json`.

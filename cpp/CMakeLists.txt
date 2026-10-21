@@ -5,7 +5,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs videoio video)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc videoio)
 find_package(yaml-cpp REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
@@ -41,25 +41,14 @@ set_target_properties(axruntime::axruntime PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${AXRUNTIME_INCLUDE_DIR}"
 )
 
-add_library(lines_temporal STATIC src/line_stabilizer.cpp)
-target_compile_features(lines_temporal PUBLIC cxx_std_17)
-target_include_directories(lines_temporal PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_include_directories(lines_temporal SYSTEM PUBLIC ${OpenCV_INCLUDE_DIRS})
-target_link_libraries(lines_temporal PUBLIC opencv_core opencv_imgproc opencv_video PRIVATE yaml-cpp::yaml-cpp)
-target_compile_options(lines_temporal PRIVATE -Wall -Wextra -Wpedantic)
-
 add_library(lines_cpp STATIC
-
     src/common/config.cpp
     src/common/types.cpp
-
     src/preprocessing.cpp
     src/inference/aipu_context.cpp
     src/inference/aipu_inference.cpp
     src/postprocessing.cpp
-
     src/segment_extractor.cpp
-
     src/pipeline.cpp
 )
 
@@ -75,25 +64,3 @@ add_executable(lines_metis app/main.cpp)
 target_link_libraries(lines_metis PRIVATE lines_cpp opencv_videoio)
 set_target_properties(lines_metis PROPERTIES CXX_EXTENSIONS OFF)
 target_compile_options(lines_metis PRIVATE -Wall -Wextra -Wpedantic)
-
-add_executable(stabilize_results tools/stabilize_results.cpp)
-target_link_libraries(stabilize_results PRIVATE lines_temporal opencv_imgcodecs nlohmann_json::nlohmann_json)
-target_compile_options(stabilize_results PRIVATE -Wall -Wextra -Wpedantic)
-
-if(BUILD_TESTING)
-    add_library(segment_reference STATIC tests/reference/reference_segment_extractor.cpp)
-    target_link_libraries(segment_reference PUBLIC lines_cpp)
-    add_executable(segment_extractor_parity_test tests/segment_extractor_parity_test.cpp)
-    target_link_libraries(segment_extractor_parity_test PRIVATE segment_reference)
-    add_test(NAME segment_extractor_parity COMMAND segment_extractor_parity_test
-        ${CMAKE_CURRENT_SOURCE_DIR}/../configs/strict.yaml
-        ${CMAKE_CURRENT_SOURCE_DIR}/../configs/balanced.yaml
-        ${CMAKE_CURRENT_SOURCE_DIR}/../configs/relaxed.yaml)
-    add_executable(cache_extraction_fields tests/cache_extraction_fields.cpp)
-    target_link_libraries(cache_extraction_fields PRIVATE lines_cpp opencv_imgcodecs)
-    add_executable(benchmark_segment_extractor tests/benchmark_segment_extractor.cpp)
-    target_link_libraries(benchmark_segment_extractor PRIVATE segment_reference nlohmann_json::nlohmann_json)
-    add_executable(line_stabilizer_test tests/line_stabilizer_test.cpp)
-    target_link_libraries(line_stabilizer_test PRIVATE lines_temporal)
-    add_test(NAME line_stabilizer COMMAND line_stabilizer_test)
-endif()

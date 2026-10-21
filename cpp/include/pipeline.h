@@ -23,7 +23,6 @@ class Pipeline {
 public:
     explicit Pipeline(const PipelineConfig& config);
     // Calls preprocessing, inference, postprocessing, extraction, then maps once.
-    // Temporal consumers may use the returned result without changing these stages.
     std::vector<Segment> Process(const cv::Mat& image, PipelineTimings* timings = nullptr);  // Original-image endpoints.
 
 private:
