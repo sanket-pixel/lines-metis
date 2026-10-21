@@ -61,6 +61,6 @@ target_link_libraries(lines_cpp PUBLIC axruntime::axruntime opencv_core opencv_i
 target_compile_options(lines_cpp PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(lines_metis app/main.cpp)
-target_link_libraries(lines_metis PRIVATE lines_cpp opencv_videoio)
+target_link_libraries(lines_metis PRIVATE lines_cpp opencv_videoio yaml-cpp::yaml-cpp nlohmann_json::nlohmann_json)
 set_target_properties(lines_metis PROPERTIES CXX_EXTENSIONS OFF)
 target_compile_options(lines_metis PRIVATE -Wall -Wextra -Wpedantic)

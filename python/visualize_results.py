@@ -2,12 +2,13 @@
 """Render cached lines-metis detections without executing the model."""
 import argparse
 import json
+import math
 from pathlib import Path
 import subprocess
 
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 W, H = 1920, 1080
 BG = (12, 18, 25)
@@ -19,7 +20,8 @@ FONT = Path('/usr/share/fonts/truetype/ubuntu')
 
 def font(size, mono=False, bold=False):
     name = 'UbuntuMono-R.ttf' if mono else ('Ubuntu-M.ttf' if bold else 'Ubuntu-R.ttf')
-    return ImageFont.truetype(str(FONT / name), size)
+    fallback = 'DejaVuSansMono.ttf' if mono else ('DejaVuSans-Bold.ttf' if bold else 'DejaVuSans.ttf')
+    return ImageFont.truetype(str(FONT / name) if (FONT / name).exists() else fallback, size)
 
 
 def load_results(path):
@@ -33,16 +35,50 @@ def load_results(path):
                 frames.append(item)
             elif item['type'] == 'summary':
                 summary = item
-    if not metadata or not summary or summary['frames'] != len(frames):
+    if not metadata or not summary or not frames or summary['frames'] != len(frames) or not summary.get('completed', True):
         raise ValueError('Expected a complete detection export')
     if metadata['coordinate_space'] != 'original_image_pixels':
         raise ValueError('Expected original-image endpoints')
+    if [f['index'] for f in frames] != list(range(len(frames))):
+        raise ValueError('Expected consecutive frame indices starting at zero')
     return metadata, frames
 
 
+class FrameSource:
+    def __init__(self, metadata, image_root=None, video=None):
+        self.root = image_root or Path(metadata['input']['path'])
+        self.capture = None
+        self.next_index = 0
+        if video or metadata['input']['type'] == 'video':
+            self.capture = cv2.VideoCapture(str(video or self.root))
+            if not self.capture.isOpened():
+                raise ValueError(f'Cannot open source video: {video or self.root}')
+
+    def read(self, frame):
+        if self.capture is None:
+            with Image.open(self.root / frame['file']) as image:
+                source = image.convert('RGB')
+        else:
+            if self.next_index != frame['index']:
+                self.capture.set(cv2.CAP_PROP_POS_FRAMES, frame['index'])
+            success, image = self.capture.read()
+            if not success:
+                raise ValueError(f"Cannot read source frame {frame['index']}")
+            self.next_index = frame['index'] + 1
+            source = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        if source.size != (frame['width'], frame['height']):
+            raise ValueError('Source dimensions differ from the saved detections')
+        return source
+
+    def close(self):
+        if self.capture:
+            self.capture.release()
+
+
 class Renderer:
-    def __init__(self, metadata, frames, image_root):
-        self.metadata, self.frames, self.image_root = metadata, frames, image_root
+    def __init__(self, metadata, frames, source, selected, tum=False):
+        self.metadata, self.frames, self.source = metadata, frames, source
+        self.selected, self.tum = selected, tum
         self.fonts = {size: font(size) for size in (18, 20, 22, 24, 28, 32, 40, 64, 84)}
         self.mono = font(22, mono=True)
         self.base = Image.new('RGB', (W, H), BG)
@@ -55,22 +91,26 @@ class Renderer:
         d.text((48, 151), '01  /  SCENE + DETECTED SEGMENTS', font=self.fonts[20], fill=MUTED)
         d.text((1360, 151), '02  /  STRUCTURE', font=self.fonts[20], fill=MUTED)
         d.text((1360, 522), '03  /  PIPELINE', font=self.fonts[20], fill=MUTED)
-        d.text((48, 1028), 'TUM RGB-D · Freiburg 2 pioneer SLAM · J. Sturm et al. · CC BY 4.0', font=self.fonts[18], fill=MUTED)
-        d.text((1190, 1028), 'cvg.cit.tum.de/data/datasets/rgbd-dataset', font=self.fonts[18], fill=MUTED)
-        self.means = {key: np.mean([f['timings_ms'][key] for f in frames]) for key in frames[0]['timings_ms']}
+        credit = 'TUM RGB-D · Freiburg 2 pioneer SLAM · J. Sturm et al. · CC BY 4.0' if tum else 'Independent frame processing · Original-image endpoints'
+        d.text((48, 1028), credit, font=self.fonts[18], fill=MUTED)
+        d.text((1370, 1028), 'github.com/sanket-pixel/lines-metis', font=self.fonts[18], fill=MUTED)
+        self.means = {key: float(np.mean([frames[i]['timings_ms'][key] for i in selected])) for key in frames[0]['timings_ms']}
+        if any(not math.isfinite(value) or value <= 0 for value in self.means.values()):
+            raise ValueError('Expected positive finite Pipeline timings')
 
     def render(self, index):
         frame = self.frames[index]
-        source = Image.open(self.image_root / frame['file']).convert('RGB')
+        source = self.source.read(frame)
         canvas = self.base.copy()
         # Keep the complete source aspect ratio, and draw every saved segment.
-        scene = source.resize((1056, 792), Image.Resampling.LANCZOS)
+        scene = ImageOps.contain(source, (1248, 792), Image.Resampling.LANCZOS)
+        left, top = 48 + (1248 - scene.width) // 2, 191 + (792 - scene.height) // 2
         scene = Image.blend(scene, Image.new('RGB', scene.size, (13, 26, 32)), .12)
-        canvas.paste(scene, (144, 191))
+        canvas.paste(scene, (left, top))
         mask = np.zeros((H, W), dtype=np.uint8)
         for x1, y1, x2, y2 in frame['segments']:
-            a = (round(144 + x1 * 1056 / frame['width']), round(191 + y1 * 792 / frame['height']))
-            b = (round(144 + x2 * 1056 / frame['width']), round(191 + y2 * 792 / frame['height']))
+            a = (round(left + x1 * scene.width / frame['width']), round(top + y1 * scene.height / frame['height']))
+            b = (round(left + x2 * scene.width / frame['width']), round(top + y2 * scene.height / frame['height']))
             cv2.line(mask, a, b, 255, 2, cv2.LINE_AA)
         array = np.array(canvas)
         visible = mask > 0
@@ -84,8 +124,10 @@ class Renderer:
             d.line((x, 191, x, 481), fill=(25, 37, 47))
         for y in range(191, 482, 32):
             d.line((1360, y, 1872, y), fill=(25, 37, 47))
+        scale = min(508 / frame['width'], 286 / frame['height'])
+        gx, gy = 1360 + (512 - frame['width'] * scale) / 2, 191 + (290 - frame['height'] * scale) / 2
         for x1, y1, x2, y2 in frame['segments']:
-            d.line((1423+x1*384/frame['width'], 192+y1*288/frame['height'], 1423+x2*384/frame['width'], 192+y2*288/frame['height']), fill=CYAN, width=1)
+            d.line((gx+x1*scale, gy+y1*scale, gx+x2*scale, gy+y2*scale), fill=CYAN, width=1)
         d.text((1360, 570), str(len(frame['segments'])), font=self.fonts[84], fill=FG)
         d.text((1520, 616), 'segments / frame', font=self.fonts[24], fill=MUTED)
         d.line((1360, 676, 1872, 676), fill=(45, 59, 70))
@@ -103,12 +145,16 @@ class Renderer:
             x = 1360 + n*128
             d.text((x, 833), label, font=self.fonts[20], fill=color)
             d.text((x, 866), f'{self.means[key]:.1f} ms', font=self.mono, fill=FG)
-        d.text((1360, 935), f"{self.metadata['preset'].upper()}  /  {self.metadata['model_provenance']['calibration_images']}-FRAME CALIBRATION", font=self.fonts[18], fill=MUTED)
-        elapsed = frame['timestamp_seconds'] - self.frames[0]['timestamp_seconds']
-        d.text((48, 991), f'FREIBURG 2   /   {elapsed:06.2f}s source', font=self.mono, fill=MUTED)
-        d.text((870, 991), f'{index+1:04d} / {len(self.frames):04d}', font=self.mono, fill=MUTED)
+        count = self.metadata['model_provenance']['calibration_images']
+        d.text((1360, 935), f"{self.metadata['preset'].upper()}  /  {count}-FRAME CALIBRATION", font=self.fonts[18], fill=MUTED)
+        elapsed = frame['timestamp_seconds'] - self.frames[self.selected.start]['timestamp_seconds']
+        clock = 'source' if self.metadata['input']['type'] == 'sequence' else 'video'
+        label = 'FREIBURG 2' if self.tum else 'INPUT VIDEO'
+        position = index - self.selected.start + 1
+        d.text((48, 991), f'{label}   /   {elapsed:06.2f}s {clock}', font=self.mono, fill=MUTED)
+        d.text((870, 991), f'{position:04d} / {len(self.selected):04d}', font=self.mono, fill=MUTED)
         d.line((48, 1019, 1872, 1019), fill=(39, 54, 65), width=2)
-        d.line((48, 1019, 48+1824*(index+1)/len(self.frames), 1019), fill=CYAN, width=2)
+        d.line((48, 1019, 48+1824*position/len(self.selected), 1019), fill=CYAN, width=2)
         return canvas
 
 
@@ -119,27 +165,43 @@ def main():
     parser.add_argument('--preview', type=Path)
     parser.add_argument('--preview-frame', type=int, default=0)
     parser.add_argument('--image-root', type=Path)
-    parser.add_argument('--fps', type=float, default=30)
+    parser.add_argument('--video', type=Path, help='Override a relocated source video')
+    parser.add_argument('--fps', type=float, help='Playback rate; defaults to input video FPS or 30 for sequences')
     parser.add_argument('--start', type=int, default=0)
     parser.add_argument('--frames', type=int)
+    parser.add_argument('--tum', action='store_true', help='Credit the TUM Freiburg 2 dataset in the footer')
+    parser.add_argument('--overwrite', action='store_true')
     args = parser.parse_args()
-    if args.fps <= 0 or args.start < 0 or (args.frames is not None and args.frames <= 0):
+    if (args.fps is not None and (not math.isfinite(args.fps) or args.fps <= 0)) or args.start < 0 or (args.frames is not None and args.frames <= 0):
         parser.error('FPS and frame count must be positive; start must be nonnegative')
+    if not args.output and not args.preview:
+        parser.error('Specify --output or --preview')
     metadata, frames = load_results(args.results)
     if args.start >= len(frames) or not 0 <= args.preview_frame < len(frames):
         parser.error('Frame index outside the export')
-    renderer = Renderer(metadata, frames, args.image_root or Path(metadata['input']['path']))
+    args.fps = args.fps or metadata['input'].get('fps', 30)
+    selected = range(args.start, min(len(frames), args.start + args.frames) if args.frames else len(frames))
+    protected = {args.results.resolve(), (args.video or Path(metadata['input']['path'])).resolve()}
     for path in (args.output, args.preview):
-        if path and path.exists():
+        if path and (path.resolve() in protected or path.with_suffix('.json').resolve() in protected):
+            parser.error('Render output must differ from the input video and detections')
+        if path and path.exists() and not args.overwrite:
             parser.error(f'Refusing to overwrite {path}')
         if path:
             path.parent.mkdir(parents=True, exist_ok=True)
+    source = FrameSource(metadata, args.image_root, args.video)
+    sample = Path(__file__).resolve().parents[1] / 'data/sample.mp4'
+    tum = args.tum or Path(metadata['input']['path']).resolve() == sample
+    renderer = Renderer(metadata, frames, source, selected, tum)
     if args.preview:
+        if args.preview_frame not in selected:
+            parser.error('Preview frame must lie inside the selected excerpt')
         renderer.render(args.preview_frame).save(args.preview)
     if not args.output:
+        source.close()
         return
-    selected = range(args.start, min(len(frames), args.start + args.frames) if args.frames else len(frames))
-    command = ['ffmpeg', '-v', 'error', '-n', '-f', 'rawvideo', '-pixel_format', 'rgb24', '-video_size', f'{W}x{H}', '-framerate', str(args.fps), '-i', '-', '-an', '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', str(args.output)]
+    temporary = args.output.with_name(args.output.stem + '.partial' + args.output.suffix)
+    command = ['ffmpeg', '-v', 'error', '-y', '-f', 'rawvideo', '-pixel_format', 'rgb24', '-video_size', f'{W}x{H}', '-framerate', str(args.fps), '-i', '-', '-an', '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', str(temporary)]
     process = subprocess.Popen(command, stdin=subprocess.PIPE)
     try:
         for count, index in enumerate(selected):
@@ -150,10 +212,20 @@ def main():
         if process.wait():
             raise RuntimeError('FFmpeg encoding failed')
     finally:
+        source.close()
         if process.poll() is None:
             process.kill()
             process.wait()
-    args.output.with_suffix('.json').write_text(json.dumps({'detections': str(args.results), 'rendered_frames': len(selected), 'first_frame': args.start, 'playback_fps': args.fps, 'timings': 'Full cached run mean; excludes capture and rendering', 'style': 'Exact endpoints, no tracking or synthetic heatmap'}, indent=2)+'\n')
+    temporary.replace(args.output)
+    args.output.with_suffix('.json').write_text(json.dumps({
+        'detections': str(args.results), 'preset': metadata['preset'], 'rendered_frames': len(selected),
+        'first_frame': args.start, 'playback_fps': args.fps, 'mean_timings_ms': renderer.means,
+        'processing_fps': 1000 / renderer.means['pipeline'],
+        'mean_segments': float(np.mean([len(frames[i]['segments']) for i in selected])),
+        'timings': 'Selected frame mean; Pipeline only, including first frame; excludes model loading, video decoding, JSON export, rendering and encoding',
+        'style': 'Exact endpoints, independent frames',
+    }, indent=2)+'\n')
+    print(f'Saved showcase: {args.output}', flush=True)
 
 
 if __name__ == '__main__':

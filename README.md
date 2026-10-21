@@ -1,239 +1,207 @@
 # lines-metis
 
-DeepLSD line segment detection on Metis. The C++ port currently implements configuration loading, image preprocessing and
-the AIPU backend, postprocessing, segment extraction and Pipeline orchestration. The legacy extractor and Python binding
-have been removed. The app processes video and reports stage timings; a Python renderer creates polished videos from cached detections. Python model, preprocessing and AxRuntime logic remain as references.
+**Learned line segment detection on Axelera Metis, with a C++ inference pipeline and a Python showcase renderer.**
+
+![DeepLSD line segments on the TUM Freiburg 2 robot sequence](assets/demo.gif)
+
+A camera image contains useful structure: wall boundaries, door frames, pillars, table edges and floor markings. `lines-metis` turns that structure into 2D line segments, represented by their two endpoints in the original image.
+
+The project ports the [DeepLSD](https://github.com/cvg/DeepLSD) neural network to INT8 inference on a Metis AIPU. Preprocessing, field decoding and a custom segment extractor run in C++; Python handles model preparation and the optional 1080p presentation. The demo uses **balanced** settings and a model calibrated with **200 Freiburg 2 frames**.
+
+## Why lines matter in robotics
+
+Point features can be sparse on plain walls, corridors and other surfaces with little texture. Lines provide complementary geometric constraints along visible boundaries. Downstream systems can use them for visual odometry and SLAM, camera localization against a map, or reconstructing indoor structure. DeepLSD demonstrates line features for localization and 3D reconstruction in [the CVPR 2023 paper](https://arxiv.org/abs/2212.07766); [LIMAP](https://github.com/cvg/limap) is an example of a downstream mapping and localization toolbox.
+
+This repository provides the **line detection front end**. Its output is a list of `[x1, y1, x2, y2]` image coordinates, ready for a separate matching, mapping or pose-estimation stage. Frames are processed independently; tracking, depth estimation, SLAM and ROS integration are outside the current implementation.
+
+## Pipeline and Metis backend
 
 ```text
-python/                 model, inference reference, export and compilation
-cpp/app/main.cpp        video runner and optional stage profiling
-cpp/include/            module headers, with common/ and inference/ subfolders
-cpp/src/                implementations, with common/ and inference/ subfolders
-weights/torch/          official MegaDepth weights and provenance
-weights/onnx/           static FP32 model
-weights/aipu/           compiled model and runtime manifest
-data/tum/<sequence>/   PNG/JPEG frames
-results/                standalone videos and measured timings
+Video frame (BGR)
+    → Preprocessing       grayscale → INTER_AREA 320×240 → /255 → INT8 + physical padding
+    → AipuInference       DeepLSD on one Metis core through AxRuntime
+    → Postprocessing      crop → dequantize each head → distance + orientation fields
+    → SegmentExtractor    region growing → weighted PCA → validation → joining → deduplication
+    → Pipeline            map endpoints back to original-image pixels
 ```
 
-## Setup and commands
+`Pipeline` owns the modules and the AIPU context. `AipuContext` manages the runtime context; `AipuInference` owns the connected device, compiled model, instance and buffers. Tensor shapes, padding, scales, zero points and output identities are validated against model/runtime metadata. They are not YAML parameters.
 
-Run `./setup.sh` with uv and curl installed.
-Setup uses `/home/sanket-shah/venvs/torch-cpu`. It does not modify the Voyager environment. Missing weights are downloaded from
-the official source and verified against the recorded checkpoint hash.
+The CNN produces normalized distance and orientation heads. Postprocessing decodes `distance = 5 × exp(-distance_normalized)` and `orientation = π × orientation_fraction`. Endpoints are mapped exactly once with the pixel-center convention `(coordinate + 0.5) × scale - 0.5`.
+
+The custom C++ extractor reuses geometry, uses stable seed ordering and fits independent regions in parallel. It differs from upstream DeepLSD's guided LSD, including its refinement and statistical validation. This is a deployment demonstration, without a quantitative detection-accuracy claim. Weak edges can be missed, and segments can fragment or flicker. Inputs with other aspect ratios are resized to the fixed 4:3 network shape.
+
+Only the CNN runs on the AIPU. Preprocessing, decoding and extraction run on the host CPU. The Python visualization is rendered offline from saved detections; its encoding cost is separate from inference performance.
+
+## Setup
+
+Validated locally on Ubuntu 24.04, GCC/C++17, Python 3.11, **Voyager compiler 1.7.0** and **AxRuntime 1.7.0**, with connected Metis hardware. SDK/runtime/driver versions must be compatible. See Axelera's [SDK installation guide](https://github.com/axelera-ai-hub/voyager-sdk/blob/latest/docs/user-guides/sdk-install.md) and release compatibility information when setting up your device. Newer SDK releases have not been validated by this project.
 
 ```bash
-make export                         # Embedded FP32 ONNX; checker and agreement check
-make compile                        # Manual compilation with 10 calibration images
+git clone https://github.com/sanket-pixel/lines-metis.git
+cd lines-metis
+
+sudo apt-get update
+sudo apt-get install -y build-essential cmake pkg-config curl ffmpeg \
+  libopencv-dev libyaml-cpp-dev nlohmann-json3-dev libssl-dev fonts-dejavu-core
 ```
 
-Parameters: `BACKEND=torch`, `SEQ=freiburg2_pioneer_slam`, `FRAMES=100`,
-`START=0`, `FPS=30`, `THREADS=4`, `CALIB_IMAGES=10`. Override `PYTHON` or `SDK`
-if needed. Calibration uses distinct real images and the inference preprocessing.
-Compilation works in a temporary directory before updating `weights/aipu/`.
-
-With OpenCV, yaml-cpp, nlohmann_json, OpenSSL and AxRuntime installed, run from
-the repository root:
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) if it is not available, then prepare the project environment and model:
 
 ```bash
-make build
-make video
-make profile
+make setup
+make data
+make sample
+make export
+make compile SDK=/path/to/voyager-sdk
+make fancy
 ```
 
-`make video` saves turquoise line overlays to `results/sample_outout.mp4`, using
-the input video's dimensions and playback FPS. The output directory is created
-automatically. Set `OUTPUT=results/my_video.mp4` to choose another file; rerunning
-replaces the selected output. `make profile` measures the Pipeline without writing
-a video.
+Run these commands from the repository root. The SDK must already be installed with its compiler environment and runtime headers/libraries. `SDK` defaults to the sibling directory `../voyager-sdk`; `SDK_PYTHON` can select another installed compiler interpreter. `AXRUNTIME_ROOT` defaults to `/opt/axelera` and can point directly to a runtime installation.
 
-The default video is `data/sample.mp4`: the first 600 Freiburg 2 frames played at
-30 FPS (20 seconds), encoded losslessly. It stays local with the dataset.
-Override it with `VIDEO=/path/to/video.mp4`. Recreate the sample from local frames
-with FFmpeg if needed:
+### Weights, export and calibration
+
+`make setup` creates `.venv`, installs the pinned Python dependencies and downloads the official [MegaDepth checkpoint](https://cvg-data.inf.ethz.ch/DeepLSD/deeplsd_md.tar). It verifies the upstream SHA-256 before extracting a tensor-only `weights/torch/deeplsd.pt`. Existing weights are retained. The model was pretrained by the DeepLSD authors; no training is performed here.
+
+`make export` writes the static FP32 ONNX model and metadata under `weights/onnx/`, with ONNX graph validation. `make compile` uses the Voyager environment to quantize and compile it for **one Metis core**. Calibration selects 200 distinct, evenly spaced RGB frames from `freiburg2_pioneer_slam`, using the same grayscale/resize/normalization as inference.
 
 ```bash
-ffmpeg -n -framerate 30 -pattern_type glob -i 'data/tum/freiburg2_pioneer_slam/*.png' \
-  -frames:v 600 -c:v libx264rgb -crf 0 -preset fast -movflags +faststart data/sample.mp4
+make compile SDK=/path/to/voyager-sdk CALIB_IMAGES=200
+# Optional recalibration; replaces weights/aipu/ after successful compilation:
+make compile SDK=/path/to/voyager-sdk CALIB_IMAGES=400
 ```
 
-`make` also builds by default. Video and profile commands build automatically,
-use Release settings and select balanced via `configs/default.yaml`. Override
-`CONFIG=configs/strict.yaml` or `CONFIG=configs/relaxed.yaml` when needed.
-Paths containing spaces work when quoted, for example `VIDEO="/path/my video.mp4"`.
-Build settings can be overridden with `BUILD_DIR=build`, `JOBS=4` and
-`AXRUNTIME_ROOT=/path/to/runtime`; CMake detects the installed runtime by default.
-Existing `make infer`, `make export` and `make compile` commands remain available.
+Export and compilation are explicit preparation steps. Ordinary video/render commands reuse the installed model. Keep `weights/aipu/` and its matching sibling `weights/onnx/` together: the backend validates the compiled model's ONNX provenance. Existing compiled binaries are local artifacts and are not included in Git. A fresh clone needs export and compilation, or a complete matching model bundle copied into these directories.
 
-The equivalent direct invocation is:
+### Dataset and sample
+
+`make data` downloads the official [TUM RGB-D Freiburg 2 pioneer SLAM sequence](https://cvg.cit.tum.de/data/datasets/rgbd-dataset/download) (about 1.6 GB compressed) and retains its 2,921 RGB PNGs in `data/tum/freiburg2_pioneer_slam/`. The sequence was captured from a camera on a Pioneer robot. Depth and ground truth are not needed by this application. An already populated RGB directory is reused.
+
+`make sample` creates the default `data/sample.mp4`: **900 consecutive RGB frames, 640×480, played at 30 FPS for 30 seconds**, encoded losslessly to preserve the input pixels. Playback follows frame order rather than the irregular original dataset timestamps. Recreating the sample replaces that file; `DURATION=20` can request a shorter excerpt.
+
+If you downloaded the archive manually, copy the files inside its `rgb/` folder directly into `data/tum/freiburg2_pioneer_slam/`, then run `make sample`.
+
+## Make commands
+
+| Command | Result |
+| --- | --- |
+| `make build` | Release executable at `build/cpp/lines_metis` |
+| `make video` | Simple line overlay at `results/balanced/video.mp4` |
+| **`make fancy`** | C++ detections + Python 1080p showcase at **`results/balanced/showcase.mp4`** |
+| `make render` | Re-render saved detections without loading or running the model |
+| `make profile` | Mean preprocessing, inference, postprocessing, extraction and total timings |
+| `make gif` | Six-second looping README preview at `assets/demo.gif` |
+| `make help` | Short command reference |
+
+Video, profile and fancy commands build automatically. Balanced is the default. Outputs are grouped by preset, and rerunning a command replaces its selected generated files.
 
 ```bash
-./build/cpp/lines_metis --video /path/to/freiburg2.mp4 --config configs/default.yaml --profile
+make fancy PRESET=strict
+make fancy PRESET=relaxed
+make video VIDEO="/path/to/robot video.mp4"
+make fancy VIDEO="/path/to/robot video.mp4" SHOWCASE=results/balanced/my_showcase.mp4
+make profile CONFIG=configs/strict.yaml
 ```
 
-The app accepts only `--video <path>`, `--config <config.yaml>` and optional
-`--output <path>` / `--profile` (`--help` prints usage). Press Ctrl+C to stop early.
-Profiling reports
-mean preprocessing, inference, postprocessing, extraction and total Pipeline time,
-plus processing FPS. Measurements include the first frame and coordinate mapping;
-they exclude model loading, video decoding, drawing, encoding and console output.
-The app prints the processed frame count and the output path when saving a video.
-Use a Release build for timing.
+The fancy path saves `detections.jsonl`, `showcase.mp4`, a poster `showcase.png` and measured averages in `showcase.json` under `results/<preset>/`. The local results also retain the three full-sequence comparisons as `<preset>/full.mp4`, with their original measurements in `full.json`; `balanced/full_detections.jsonl` preserves the complete optimized detection run for future rendering. JSONL contains the input/model/settings metadata, ordered frame endpoints and stage timings, followed by a completion record. These endpoints are in original-image coordinates; visualization does not transform them a second time. The renderer preserves the input aspect ratio.
 
-In CLion, select the `lines_metis` target and paste the same arguments into Program
-arguments. Paths inside YAML resolve relative to the YAML file. The selected
-`segment_extractor.strictness` preset comes from `presets_file`; optional
-`min_length` and `max_join_gap` override it. Unknown keys and invalid values are errors.
+The display shows the source scene, the exact detected segments, a geometry-only companion view, frame counts and measured stage means. **Processing FPS** is `1000 / mean Pipeline milliseconds`; it includes the first frame and endpoint mapping, and excludes model loading, decoding, JSON export, rendering and encoding. **Playback FPS** follows the input video. These numbers measure different things.
 
-Preset comparison (distances and lengths in network pixels):
+For visual iteration after one inference run:
+
+```bash
+make render
+make gif
+
+# A cached excerpt or a still, using only Python + FFmpeg:
+.venv/bin/python python/visualize_results.py \
+  --results results/balanced/detections.jsonl \
+  --output results/balanced/excerpt.mp4 --start 120 --frames 300 --tum
+```
+
+The standard sample is credited automatically. `--tum` adds the Freiburg dataset attribution for other Freiburg exports; omit it for unrelated footage. `--video /new/source.mp4` relocates a cached source video, and `--image-root /new/rgb` supports older PNG-sequence exports. Use `--preview path.png --preview-frame 120` for a still, or `--overwrite` to replace chosen render outputs. `./setup.sh --viz-only` installs just NumPy, OpenCV and Pillow when only rendering cached results. Ubuntu fonts are used when available, with a DejaVu fallback.
+
+`make gif` reads the selected `SHOWCASE`, taking seconds 0–6 at 10 FPS and 960 pixels wide. Run `make fancy` first. The full 30-second balanced MP4 is the LinkedIn upload asset; the GIF is the lightweight repository preview.
+
+## Configuration
+
+The model directory is configurable. YAML paths are resolved relative to their containing file. For example:
+
+```yaml
+inference:
+  model_directory: ../weights/aipu
+
+segment_extractor:
+  presets_file: segment_presets.yaml
+  strictness: balanced
+  joining_enabled: true
+  # Optional overrides, measured in 320×240 network pixels:
+  # min_length: 10.0
+  # max_join_gap: 8.0
+```
+
+Full preset thresholds live in [`configs/segment_presets.yaml`](configs/segment_presets.yaml). Unknown settings and invalid values are rejected.
 
 | Preset | Minimum support | Maximum mean distance | Maximum join gap | Minimum length |
 | --- | ---: | ---: | ---: | ---: |
 | Strict | 0.8 | 0.8 | 4 | 10 |
-| Balanced | 0.7 | 1.1 | 8 | 10 |
+| **Balanced** | **0.7** | **1.1** | **8** | **10** |
 | Relaxed | 0.6 | 1.5 | 12 | 8 |
 
-Balanced is the default in `configs/default.yaml`. Strict remains the original
-accepted baseline. Balanced and relaxed are experimental:
-they accept weaker support and bridge larger gaps, recovering additional lines
-but also adding clutter in the sampled scenes. Use `--config configs/balanced.yaml`
-or `--config configs/relaxed.yaml` to compare them. These files use the preset
-values directly; `configs/default.yaml` also uses balanced without overrides.
-The previous strict default is preserved as `configs/strict.yaml`.
-Full threshold definitions, including region/angle and lateral-join tolerances,
-are in `configs/segment_presets.yaml`.
+Strict is the original accepted baseline. Balanced recovers more structure and is the selected demo preset; relaxed accepts weaker support and larger gaps. These are visual tuning presets rather than benchmarked accuracy levels. Distances, gaps and lengths above are in network pixels.
 
-Previously saved detection exports remain available for Python visualization.
-JSONL contains metadata, one record per source frame, then a final frame-count
-summary. Each frame includes `segments` as `[x1,y1,x2,y2]` in original-image
-pixels and `timings_ms`. The renderer draws these endpoints directly, without
-mapping them a second time. The compact video app does not export endpoint JSON.
+`PRESET` chooses the standard YAML and results directory. If supplying a custom `CONFIG`, set `PRESET` too when you want a different output folder. The exported/rendered preset label always comes from the actual YAML.
 
-The Pipeline owns its AIPU context and four modules, reuses decoded-field buffers,
-and runs preprocessing, inference, postprocessing and segment extraction in order.
-It maps endpoints once to original-image coordinates and returns `std::vector<Segment>`.
-The video runner processes each frame independently and prints one summary.
+## Performance
 
-Preprocessing converts BGR to grayscale, resizes to 320x240 with INTER_AREA,
-normalizes with `/255`, then quantizes and pads the backend input using runtime
-metadata. No stage-specific tensor settings are exposed in YAML.
+The 900-frame balanced showcase measured **27.8 ms/frame (35.9 processing FPS)** on an AMD Ryzen 7 3700X host with one Metis core and the 200-frame-calibrated model:
 
-Quantization matches Python's float32 affine arithmetic, ties-to-even rounding
-and int8 saturation. All physical padding uses the saturated zero point. For the
-current model this produces NHWC `[1,242,322,64]`, with padding value `-128` even
-when the metadata zero point falls below the int8 range.
-Preprocessing exposes one `Process()` entry point, writing directly to the padded
-runtime input buffer without an intermediate float image. It preserves the
-float32 normalization and quantization arithmetic. A future fused kernel can
-replace this implementation behind the same interface.
-Postprocessing crops each output using its own padding, independently dequantizes
-the heads, then decodes `distance = 5*exp(-distance_normalized)` and
-`orientation = pi*orientation_fraction`. It reuses two contiguous row-major float
-vectors of 240x320 samples, in network pixels and radians. Orientation matched
-Python exactly on the verification frame; distance differed by at most
-`4.77e-7` pixels due to floating-point exponential evaluation. No postprocessing
-YAML settings are needed.
+| Stage | Mean time |
+| --- | ---: |
+| Preprocessing | 1.4 ms |
+| AIPU inference | 20.8 ms |
+| Postprocessing | 0.9 ms |
+| Segment extraction | 4.7 ms |
+| Complete Pipeline | **27.8 ms** |
 
-`SegmentExtractor` consumes `config.segment_extractor`, including the resolved
-preset thresholds and YAML overrides. It grows orientation-consistent regions,
-fits weighted PCA segments, validates sampled support and mean distance, optionally
-joins collinear segments, and suppresses duplicates. The accepted strict preset
-keeps `min_support=0.8` and `max_mean_distance=0.8` network pixels. `joining_enabled`
-controls joining, while `min_length` and `max_join_gap` override the preset. The extractor returns endpoints in network coordinates. Pipeline alone maps them
-using `(coordinate + 0.5) * scale - 0.5`; callers receive original-image coordinates.
-Mapping was checked against Python on 640x480, 517x301 and 157x111 inputs derived
-from a Freiburg frame, and repeated calls reuse the same Pipeline instance.
+These are local Pipeline measurements, not camera-to-display throughput or an accuracy benchmark. Expect variation with the host, input and runtime; use `make profile` for your system. Every new showcase records its own timings in its JSON sidecar and displays those measurements.
 
-`AipuContext` is shared by reference across `AipuInference` objects and must outlive
-them. Each backend owns its connection, model, instance and int8 buffers. It checks
-runtime tensors against `manifest.json` and `model.json` before connecting a device.
-Provenance verification reads `provenance.json` and the sibling
-`../onnx/deeplsd.onnx` relative to the configured model directory. `num_cores`
-controls model-instance allocation on one connected subdevice. `Process()` runs
-already quantized/padded input buffers; output indices 0 and 1 are distance and
-orientation, independent of their DDR offsets.
+## Code layout and C++ use
 
-## Pipeline
-
-The standard DeepLSD VGG U-Net receives grayscale FP32 `[1,1,240,320]`: BGR to
-grayscale, `INTER_AREA` resize, then division by 255. Its separate heads produce
-distance and orientation values. CPU decoding uses `5*exp(-distance_normalized)`
-and `pi*orientation_fraction`.
-
-The C++ extractor grows regions from these fields, fits weighted PCA segments,
-validates field support, joins supported collinear pieces when enabled and
-suppresses duplicates. Endpoints map back with the pixel-center
-resize convention. See [the native API](cpp/include/segment_extractor.h).
-
-This extractor differs from upstream DeepLSD's guided LSD: it omits image-gradient
-disambiguation, rectangle refinement and NFA significance testing. It can miss
-weak lines or join nearby structures. There is no tracking or accuracy claim.
-Non-4:3 images are stretched by the fixed resize.
-
-AxRuntime checks the manifest, quantizes and pads NHWC int8 input, crops output
-padding and dequantizes each head independently. Output ABI ID 0 is distance;
-ID 1 is orientation. It uses one subdevice/core. The current local compiled model uses 200 Freiburg 2 calibration frames.
-Checkpoint and compiled-model provenance remain in `weights/`.
-
-## Results
-
-Full C++ Pipeline videos use the same 200-frame calibrated model and all 2,921
-Freiburg frames, rendered at 30 FPS. Each video has a JSON sidecar with resolved
-settings, model hashes, input frame order and profiling measurements.
-
-| Preset | Video | Mean segments/frame | Mean Pipeline FPS |
-| --- | --- | ---: | ---: |
-| Strict | [Video](results/freiburg2_pioneer_slam_aipu_calib200_full.mp4) | 62.1 | 34.8 |
-| Balanced (experimental) | [Video](results/freiburg2_pioneer_slam_aipu_calib200_balanced_full.mp4) | 93.3 | 31.8 |
-| Relaxed (experimental) | [Video](results/freiburg2_pioneer_slam_aipu_calib200_relaxed_full.mp4) | 116.1 | 30.0 |
-
-The increased segment counts are not accuracy scores. Sampled frames show more
-recovered structure and longer segments on average, with additional clutter.
-Older `aipu.mp4` and `aipu_strict.mp4` results predate removal of the legacy extractor.
-[The AIPU video](results/aipu.mp4) uses the first 300 Freiburg 2 frames, played at
-30 FPS. Processing FPS includes preprocessing, inference and CPU line extraction;
-it excludes image reads, rendering and encoding. Playback FPS is independent.
-`results/metrics.json` records timings and the frame-order fingerprint.
-
-Model weights are MIT; the C++ implementation is AGPL-3.0-or-later.
-See [attribution and licenses](THIRD_PARTY_NOTICES.md).
-
-### Python showcase renderer
-
-Render cached endpoints without loading the model:
-
-```bash
-python python/visualize_results.py \
-  --results results/freiburg2_pioneer_slam_aipu_calib200_balanced_detections.jsonl \
-  --output results/my_showcase.mp4 \
-  --preview results/my_showcase.png --preview-frame 600
+```text
+cpp/app/main.cpp             video runner, detection export and profiling
+cpp/include/                stage and Pipeline interfaces
+cpp/src/                    stage implementations
+  common/                   typed configuration and shared types
+  inference/                AipuContext and AipuInference
+configs/                    YAML presets and example configurations
+python/                     model preparation, runtime reference and visualization
+assets/demo.gif             tracked README preview
+weights/                    local model artifacts and tracked provenance
+results/{balanced,strict,relaxed}/  local generated outputs
 ```
 
-Requires NumPy, OpenCV, Pillow, FFmpeg and Ubuntu fonts (installed system fonts).
-The 1080p composition pairs the exact saved detections with a geometry-only view.
-Performance labels use averages from the complete cached run, excluding capture,
-rendering and encoding; playback defaults to 30 FPS independently. The source
-clock uses dataset timestamps. No tracking, line filtering or heatmap is added.
-Use `--start` and `--frames` for excerpts, `--image-root` to relocate source images,
-and `--preview` without `--output` for a still. Existing files are never overwritten.
+```cpp
+#include "pipeline.h"
 
-### Frozen showcase baseline
+const auto config = lines::LoadConfig("configs/balanced.yaml");
+lines::Pipeline pipeline(config);
+const auto segments = pipeline.Process(bgr_frame);  // std::vector<lines::Segment>
+```
 
-`showcase-v1` identifies the balanced C++ pipeline and Python visualization baseline.
-[Baseline hashes](baselines/showcase_v1.json) identify the exact local models,
-detections and showcase artifacts. Git contains source, configs, licenses and
-provenance; datasets, model binaries, generated results, build products and IDE
-state stay local. Result links above refer to locally generated files.
+Keep one Pipeline instance across frames to reuse its model and buffers. The video app also supports direct use:
 
-### Performance
+```bash
+./build/cpp/lines_metis --video data/sample.mp4 --config configs/balanced.yaml \
+  --detections results/balanced/detections.jsonl --profile
+```
 
-The optimized extractor caches geometry and trigonometry, uses stable radix seed
-sorting, and fits independent regions in parallel while preserving output order.
-Balanced remains the default preset.
+Optional `--output path.mp4` saves the simple overlay. Press Ctrl+C to stop. Interrupted detection exports remain `.jsonl.partial` files; only complete exports replace the final JSONL. Use `JOBS=4`, `BUILD_DIR=build`, `PYTHON=/path/to/python` or `AXRUNTIME_ROOT=/path/to/runtime` to override the corresponding Make defaults.
 
-A recorded run over all 2,921 Freiburg frames with the 200-frame-calibrated model
-averaged 27.4 ms per Pipeline frame (36.5 FPS), including 4.5 ms for extraction.
-These timings include the first frame and coordinate mapping, and exclude video
-I/O, rendering and encoding. The full optimized showcase is saved locally as
-`results/lines_metis_balanced_optimized_showcase_full.mp4`, with measurements in
-`results/lines_metis_balanced_optimized_metrics.json`.
+## Attribution and license
+
+DeepLSD: Rémi Pautrat, Dániel Baráth, Viktor Larsson, Martin R. Oswald and Marc Pollefeys, *DeepLSD: Line Segment Detection and Refinement with Deep Image Gradients*, CVPR 2023. The upstream model and pretrained weights are **MIT** licensed.
+
+Demo footage: Jürgen Sturm et al., *A Benchmark for the Evaluation of RGB-D SLAM Systems*, IROS 2012, [TUM RGB-D](https://cvg.cit.tum.de/data/datasets/rgbd-dataset). Dataset images are **CC BY 4.0** unless otherwise stated by the authors. The README GIF and showcase add detected-line and performance overlays to this footage. Keep this credit when sharing them.
+
+The C++ pipeline is **AGPL-3.0-or-later**. SDK/runtime libraries retain Axelera's licenses and are not redistributed. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Git contains code, configuration, provenance and the README GIF; datasets, model binaries, builds and generated result videos stay local.

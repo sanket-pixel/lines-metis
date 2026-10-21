@@ -20,7 +20,7 @@ SETTINGS = dict(model_name='deeplsd', remove_output_dir=False, save_error_artifa
 def main():
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument('--seq', default='freiburg2_pioneer_slam')
-    parser.add_argument('--images', type=int, default=10)
+    parser.add_argument('--images', type=int, default=200)
     args = parser.parse_args()
     available = images(args.seq, frames=None)
     if not 1 <= args.images <= len(available):

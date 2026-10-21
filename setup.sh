@@ -1,15 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
-PYTHON=${PYTHON:-/home/sanket-shah/venvs/torch-cpu/bin/python}
+if [[ "${1:-}" != "" && "${1:-}" != "--viz-only" ]]; then
+    echo 'Usage: ./setup.sh [--viz-only]' >&2; exit 2
+fi
+PYTHON=${PYTHON:-.venv/bin/python}
+if [ "$PYTHON" = .venv/bin/python ] && [ ! -x "$PYTHON" ]; then
+    uv venv --python 3.11 .venv
+fi
+if [[ "${1:-}" == "--viz-only" ]]; then
+    uv pip install --python "$PYTHON" 'numpy==2.4.6' 'opencv-python==5.0.0.93' 'Pillow==12.3.0'
+    exit 0
+fi
 uv pip install --python "$PYTHON" --index-url https://download.pytorch.org/whl/cpu 'torch==2.14.1+cpu'
-uv pip install --python "$PYTHON" -r requirements.txt
+uv pip install --python "$PYTHON" --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match -r requirements.txt
 if [ ! -f weights/torch/deeplsd.pt ]; then
     SOURCE_CHECKPOINT=$(mktemp)
     trap 'rm -f "$SOURCE_CHECKPOINT"' EXIT
     curl -L --fail https://cvg-data.inf.ethz.ch/DeepLSD/deeplsd_md.tar -o "$SOURCE_CHECKPOINT"
-    TORCH_SITE=$("$PYTHON" -c 'import site; print(site.getsitepackages()[0])')
-    PYTHONPATH="$TORCH_SITE${PYTHONPATH:+:$PYTHONPATH}" uv run --no-project --python "$PYTHON" --with omegaconf==2.4.0 python - "$SOURCE_CHECKPOINT" <<'PY'
+    "$PYTHON" - "$SOURCE_CHECKPOINT" <<'PY'
 import hashlib, json, pathlib, sys, torch
 source = pathlib.Path(sys.argv[1])
 expected = '56e9bae263977caa289ae49802987a67d4f00f376ae7e542176c8ae0a6cc2083'
